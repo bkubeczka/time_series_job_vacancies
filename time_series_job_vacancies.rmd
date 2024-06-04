@@ -1,0 +1,3081 @@
+---
+title: 'Rapport : Séries Temporelles'
+author: "EMSBD6 - Bruno KUBECZKA"
+date: "7 juin 2023"
+abstract: "Cette étude a pour objet la mise en application des techniques de modélisation des séries temporelles. Elle propose de se pencher sur l'évolution du nombre de postes vacants en France de 1989 à 2023 en identifiant les modèles les plus adaptés à la prédiction d'une part et en étudiant le comportement des modèles face aux années COVID d'autre part."
+output: 
+  pdf_document: 
+    toc: yes
+    toc_depth: 4
+    number_sections: yes
+    highlight: tango
+    fig_height: 4
+  html_notebook: 
+    toc: yes
+    toc_depth: 4
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache=TRUE)
+```
+
+```{r, include=FALSE}
+rm(list=ls())
+```
+
+```{r chargement des librairies ts, message=FALSE, warning=FALSE, include=FALSE}
+if (system.file(package='forecast')=="") { install.packages("forecast") }
+if (system.file(package='caschrono')=="") { install.packages("caschrono") }
+
+# Chargement des librairies
+library(forecast)
+library(caschrono)
+```
+
+
+```{r chargement des librairies tableau, message=FALSE, warning=FALSE, include=FALSE}
+
+if (system.file(package='kableExtra')=="") { install.packages("kableExtra") }
+
+# Chargement des librairies (tableaux sous R)
+library(knitr)
+library(kableExtra)
+
+# cf. https://thinkr.fr/les-tableaux-statiques-pour-vos-rapports-en-r/
+```
+
+
+```{r, include=FALSE}
+
+col_ts = "grey30"
+col_event = "orange"
+col_2020 = "darkorange3"
+
+col_arma = "brown"
+col_sarima = "dodgerblue3"
+col_le = "darkorange"
+col_sarima_2="deeppink1"
+
+```
+
+```{r, include=FALSE}
+main_chrono_all = "Nombre de postes vacants de Janvier 1989 à Janvier 2023"
+main_chrono_study = "Série étudiée (Jan 2009 - Dec 2019)"
+main_chrono_train = "Chronogramme de la série d'entraînement (Jan 2009 - Dec 2018)"
+main_chrono_test = "Chronogramme de la série de test (2019)"
+main_chrono_2020 = "Chronogramme de l'année 2020"
+```
+
+```{r, include=FALSE}
+
+# ===============
+# SERIE 1989-2023
+# ETUDE 2008-2019
+#
+#   TRAIN 1989-2018
+#   TEST 2019
+# ===============
+
+# Etude sur le périmètre avant COVID: 
+# . On sort les années 2020 et au-délà (covid, guerre en Ukraine) 
+# . On entraîne jusque 2018 et on prédit 2019
+
+ts_start = c(1989,1) # début de la série téléchargée
+
+## Partie étudiée (Jan 2009 - Dec 2019)
+study_start = c(2009, 1) ## Point de départ de la partie étudiée
+study_end = c(2019, 12) ## Fin de la série étudiée
+
+## Echantillon d'entraînement (Jan 2009 - Dec 2018)
+training_start = study_start 
+training_end = c(2018,12) 
+
+## Echantillon de test (2019)
+test_start = c(2019, 1)
+test_end = study_end
+
+```
+
+```{r, include=FALSE}
+
+# chargement des données
+dat<-read.table("./_input_/fred_job_vacancies_france.csv",
+                sep=",",
+                dec=".",
+                row.names = 1,
+                header=TRUE)
+
+colnames(dat)[1] <- "Postes vacants"
+
+head(dat) %>% kable()
+
+colnames(dat)
+nrow(dat)
+summary(dat)
+```
+
+
+```{r, include=FALSE}
+
+# CREATION des SERIES TEMPORELLES
+
+
+# Série temporelle entière (Jan 1989 - Jan 2023)
+
+job.ts.all <- ts(dat, start=ts_start, frequency = 12)
+
+length(job.ts.all)
+start(job.ts.all)
+end(job.ts.all)
+frequency(job.ts.all)
+
+# Série temporelle de la période d'étude (Jan 2009 - Dec 2019)
+
+job.ts.study <- window(job.ts.all, start=study_start, end=study_end, frequency = 12)
+
+length(job.ts.study)
+start(job.ts.study)
+end(job.ts.study)
+frequency(job.ts.study)
+
+# Série temporelle d'entraînement (Jan 2009 - Dec 2018)
+
+job.ts.train <- window(job.ts.all, start=training_start, end=training_end, frequency = 12)
+
+length(job.ts.train)
+start(job.ts.train)
+end(job.ts.train)
+frequency(job.ts.train)
+
+# Série temporelle de test (2019)
+
+job.ts.test <- window(job.ts.all, start=test_start, end=test_end, frequency = 12)
+
+length(job.ts.test)
+start(job.ts.test)
+end(job.ts.test)
+frequency(job.ts.test)
+
+# Série temporelle 2020
+
+job.ts.2020 <- window(job.ts.all, start=c(2020,1), end=c(2020,12), frequency = 12)
+
+length(job.ts.2020)
+start(job.ts.2020)
+end(job.ts.2020)
+frequency(job.ts.2020)
+```
+
+\newpage
+
+# Introduction
+
+## Présentation des données
+
+Source des données:
+
+- FRED Federal Reserve Economic Data - St Louis Fed : Total new job vacancies, Flow for France (Not Seasonally Adjusted)(Unité : nombre, Fréquence : mensuelle)
+
+  https://fred.stlouisfed.org/series/LMJVTTNVFRM647N
+
+
+- OCDE: https://stats.oecd.org/ - Registered Unemployed and Job Vacancies for OECD countries
+
+```{r, echo=FALSE, fig.align='center'}
+plot(job.ts.all,
+     main = "Nombre de postes vacants de Janvier 1989 à Janvier 2023",
+     col=col_ts,
+     cex.main=0.9)
+```
+
+
+Les données qui nous intéressent sont issues du site de l'OCDE (Organisation de coopération et de développement économiques) ; elles représentent l'évolution du **nombre de postes vacants en France** de **Janvier 1989 à Janvier 2023**.
+
+Les «postes vacants » (job vacancies), sont des postes libres, nouvellement créés ou inoccupés, ou encore occupés et sur le point de se libérer, pour lesquels des démarches actives sont entreprises pour trouver le candidat convenable. Le recrutement souhaité peut correspondre à un contrat à durée indéterminée (CDI), un contrat à durée déterminée (CDD), ou à un emploi saisonnier, même de courte durée.
+
+Les données couvrent les entreprises de 10 salariés ou plus du champ privé, situés en France métropolitaine et dans les départements-régions d'Outremer (Drom) hors Mayotte. Sont exclus du champ l'agriculture, l'intérim, les particuliers employeurs et les emplois publics.
+
+Le nombre de postes vacants qui fait partie des données dont l’objectif est d’estimer le niveau et la répartition de la demande de main-d'oeuvre non satisfaite, est à opposer au taux de chômage qui représente les offres de main-d'oeuvre non satisfaite. 
+
+Les données issues de l'OCDE via la FRED (Federal Reserve Economic Data) sont fournies sous la forme d'un **fichier CSV** ; elles compilent les **données mensuelles** depuis **Janvier 1989**.
+
+
+Dans le cadre de la mise en application des techniques de modélisation des séries temporelles, ces données présentent l'avantage
+
+- de mettre à disposition un **grand nombre de données**,
+
+- de présenter une **évolution avec tendance et saisonnalité**,
+
+- de présenter des **données "accidentées"** des différentes crises économiques.
+
+
+## Objet de l'étude
+
+Regardons le chronogramme de la série temporelle (de Janvier 1989 à Janvier 2023) pour comprendre l'orientation de l'étude.
+
+```{r, echo=FALSE}
+plot(job.ts.all,
+     main = main_chrono_all,
+     col=col_ts,
+     cex.main=0.9)
+
+abline(v=1993, col=col_event, lwd=2)
+abline(v=2000, col=col_event, lwd=2)
+abline(v=2008.5, col=col_event, lwd=2)
+abline(v=2012.5, col=col_event, lwd=2)
+abline(v=2019.8, col=col_2020, lwd=2)
+abline(v=2021.2, col=col_2020, lwd=2)
+
+legend("topleft",
+       legend=c("évènement économique", "année COVID"),
+       col=c(col_event, col_2020),
+       lty=1,
+       cex=0.7)
+
+```
+
+
+Le chronogramme du nombre de postes vacants est jalonné des différents évènements économiques impactant le marché du travail :
+
+- Dès **1993** : politique volontariste dédiée à inciter le marché du travail 
+
+  - Diminution du coût du travail en 1993, renforcée en 1995-1996. 
+  
+  - Dispositifs incitant à la réduction du temps de travail de 1996 jusque 2000 (développement du temps partiel, réduction collective des horaires de travail)
+  
+  - Dispositifs type "Emploi-jeune" en 1997
+  
+- **2000** : Le marché de l'emploi ayant été dopé, les incitations imaginées depuis 1993 sont arrêtées progressivement et le marché de l'emploi trouve son rythme de croisière.
+
+- **2008** : crise économique mondiale consécutive à la crise des "subprimes". La France et la zone euro en général entrent en récession en Janvier 2009. Le marché du travail s'effondre.
+
+- **2013** : fin de la récession en zone Euro ; néanmoins les choix stratégiques européens pour répondre à la crise sclérosent l'économie, amènent des taux de croissance faibles et créent un chômage de masse.
+  
+- **2020** : l'année COVID stoppe l'économie mondiale 
+
+
+Parmi ces "cassures" économiques, les plus marquées sur le chronogramme sont la crise mondiale de 2008 et surtout l'arrêt brutal de l'économie en Mars 2020.
+
+Si on regarde la situation en mars 2020, on peut légitimement s'interroger si un modèle de la série temporelle valable jusqu'en décembre 2019 peut toujours être considéré comme pertinent en 2020, alors que les valeurs observées sont visiblement accidentées.
+
+Dans le cadre de ce projet, on va s’atteler à répondre à cette question et on propose de procéder de la façon suivante :
+
+- Dans 1er temps, on extraira les données comprises entre les 2 crises majeures, à savoir la **série temporelle de Janvier 2009 à Décembre 2019** ; ce sera la **série d'étude**.
+
+- La **série d'étude** sera alors scindée de la façon suivante
+
+  - une **série d'entraînement** de **Janvier 2009 à Décembre 2018**, qui servira à identifier des modèles candidats à prédire une **série temporelle de test**.
+  
+  - l'**année 2019** servira de **série temporelle de test** pour valider les modèles candidats
+  
+- On entraînera ensuite les modèles les plus aptes à la prédiction sur l'ensemble de la **série d'étude**.
+
+- Enfin, on prédira les valeurs pour l'année 2020 et au-delà et on statuera sur la pertinence des modèles et de leurs prédictions.
+
+
+```{r, echo=FALSE, fig.align='center'}
+
+# Zoom sur la zone étudiée
+
+plot(window(job.ts.all, start=study_start, end=2021),
+     main="Série d'étude + année 2020")
+abline(v=2009, col=col_event, lwd=2) # série d'entrainement (Jan 2009 - Dec 2019)
+abline(v=2019, col=col_event, lwd=2, lty=2) # série de test (2019)
+abline(v=2020, col=col_2020, lwd=2) # 2020 : année charnière
+abline(v=2021, col=col_2020, lwd=2)
+
+legend(2010, 130000,
+       legend=c("série d'entraînement", "série de test", "année COVID"),
+       col=c(col_event, col_event, col_2020),
+       lty=c(1,2,1),
+       cex=0.7)
+```
+
+
+# Analyse exploratoire
+
+L'analyse exploratoire propose une 1ère approche des caractéristiques de la série d'étude de Janvier 2009 à Décembre 2019.
+
+## Chonogramme de la série étudiée
+
+```{r, echo=FALSE}
+plot(job.ts.study,
+     main = main_chrono_study,
+     col=col_ts,
+     cex.main=0.9)
+
+```
+
+En 1ère analyse à l'oeil, la série présente
+
+- une tendance globalement stable sur le long terme, mais localement en hausse ou en baisse,
+
+- une saisonnalité marquée, 
+
+- une variabilité (raisonnable) des données.
+
+
+## Saisonnalité : Monthplot
+
+Le *monthplot* donne le chronogramme associé à chaque mois de l'année.
+
+
+```{r}
+monthplot(job.ts.study)
+```
+
+Ainsi le *monthplot* nous éclaire sur les caractéristiques de la saisonnalité :
+
+- Pour chaque mois, le chronogramme présente une tendance à l'allure similaire, mais à l'amplitude différente
+
+- En observant les moyennes mensuelles, on note
+
+  - 3 pics annuels du nombre de postes vacants : Mars, Juin et Septembre,
+
+  - une baisse importante du nombre de postes vacants de septembre à décembre,
+  
+  - un rebond en janvier par rapport au mois de décembre de l'année précédente,
+
+  - une forte baisse du nombre de postes vacants en Août, avant la reprise de septembre.
+
+
+**Autre point notable** qui pourra avoir de l'importance lors de la modélisation ARMA/SARIMA : Mars, Juin et Septembre sont des mois multiples de 3 ; on peut s'attendre à des corrélations plus ou moins marquées entre la série et la série décalée de 3 voire 6 mois.
+
+
+## Saisonnalité : Lag-plot
+
+Le lag-plot présente un diagramme mettant en avant les potentielles corrélations entre la série et la série retardée d'autant d'indices que la saisonnalité supposée (ici 12).
+
+L'idée est de confirmer l'ordre de la saisonnalité ainsi que d'éventuelles corrélations à des ordres plus petits.
+
+```{r, echo=FALSE}
+lag.plot(rev(job.ts.study), lag=12,
+         main="Monthplot de la série d'étude (Jan 2009 - Dec 2019)")
+```
+
+
+En l'occurrence, la corrélation la plus forte (i.e. la forme la plus allongée) est obtenue au **retard 12**.
+
+On note aussi une tendance à la linéarité entre la série et la série retardée aux **décalages 3 et 6**, ce qui confirme la tendance du month-plot (une corrélation forte tous les 3 mois)
+
+## Modélisation additive
+
+L'idée est de scinder la série en une **tendance générale**, une **saisonnalité**, une **composante résiduelle** combinées de façon additive, à savoir
+
+$$X_t = M_t+S_t+Z_t$$
+où 
+
+- $M_t$ est la **tendance générale** (évolution à long terme de la série)
+
+- $S_t$ est la **saisonnalité** (schéma périodique)
+
+- $Z_t$ sont les **résidus** que l'on souhaite idéalement de **moyenne nulle** et de **faible variabilité constante**.
+
+
+### Tendance générale par moyenne mobile
+
+On procède à une estimation de la tendance par moyennes mobiles d'ordre 12 (saisonnalité supposée), qu'on complète par une régression linéaire simple de 1er ordre pour visualiser la tendance de façon plus explicite.
+
+```{r}
+job.ts.tendance <- as.ts(ma(job.ts.study, order=12, centre = TRUE))
+```
+
+```{r, echo=FALSE}
+
+# régression linéaire de la tendance
+job.ts.tendance.reg <- lm(job.ts.tendance~time(job.ts.tendance))
+
+```
+
+
+```{r, echo=FALSE}
+plot(job.ts.tendance, 
+     main="Série d'étude - tendance générale par moyenne mobile",
+     col=col_ts)
+abline(job.ts.tendance.reg, col="darkseagreen4")
+```
+
+La tendance générale est localement fluctuante, à la hausse ou à la baisse.
+
+Globalement, elle est légèrement à la hausse sur la période Jan 2009 - Dec 2019.
+
+### Saisonnalité
+
+La saisonnalité est obtenue en **diminuant** la série de la tendance générale calculée précédemment.
+
+```{r}
+job.ts.add.saisonnalite <- job.ts.study-job.ts.tendance
+```
+
+
+
+```{r, echo=FALSE}
+plot(job.ts.add.saisonnalite,
+     main="Série d'étude - Saisonnalité (modèle additif)",
+     col=col_ts)
+```
+
+```{r, echo=FALSE}
+m <- t(matrix(data=job.ts.add.saisonnalite, nrow=12))
+job.ts.add.saisonnalite.mean <- colMeans(m, na.rm=TRUE)
+plot(as.ts(job.ts.add.saisonnalite.mean),
+     main="Série d'étude - Saisonnalité moyenne (modèle additif)",
+     ylab="Postes vacants") ## on répete la saisonnalité moyenne sur 11 an
+```
+
+
+On visualise ici la saisonnalité sur l'ensemble de la série d'une part et la saisonnalité moyenne sur les 11 années de la série d'étude.
+
+Le schéma imaginé dans le chapitre *monthplot* se confirme soit
+
+- une saisonnalité à 3 pics,
+
+- de fortes baisses en août et décembre,
+
+- une reprise en janvier,
+
+### Bruit résiduel
+
+Le bruit résiduel est la série d'étude diminuée de la tendance générale et de la saisonnalité moyenne.
+
+```{r}
+job.ts.add.random <- job.ts.study - job.ts.tendance - job.ts.add.saisonnalite.mean
+```
+
+```{r, echo=FALSE}
+plot(job.ts.add.random,
+     main="Série d'étude - bruit résiduel (modèle additif)",
+     col=col_ts)
+
+abline(h=0, col="orange")
+```
+
+```{r}
+mean(job.ts.add.random, na.rm=TRUE)
+```
+Le bruit résiduel est bien **centré en 0** et présente une **variabilité plutôt faible**, qui pourrait laisser penser à un bruit blanc.
+
+Les différentes modélisations à venir statueront sur la nature du bruit résiduel.
+
+
+### Décomposition automatique
+
+On décompose la série d'étude grâce à la fonction *decompose*.
+
+```{r}
+decomposition_additive=decompose(job.ts.study, type="additive")
+```
+
+
+```{r, echo=FALSE}
+plot(decomposition_additive)
+abline(v=2009, col=col_event, lwd=2)
+abline(v=2019, col=col_event, lwd=2, lty=2)
+abline(v=2020, col=col_event, lwd=2, lty=2)
+```
+
+
+La décomposition automatique reprend les graphes introduits dans les chapitres précédents (tendance, saisonnalité, erreur).
+
+La représentation la plus intéressante reste celle de l'erreur.
+
+Au vu du **bruit résiduel centré en 0 et de variance stable**, une **modélisation additive** semble être une **bonne approche de la série**.
+
+## Modélisation multiplicative
+
+De la même façon que précédemment, on va décomposer la série en une **tendance générale**, une **saisonnalité** et une part d'**erreur**.
+
+Néanmoins, cette fois-ci nous allons considérer une approche multiplicative de la série, à savoir
+
+$$X_t = M_t*S_t*Z_t$$
+où 
+
+- $M_t$ est la **tendance générale** (évolution à long terme de la série)
+
+- $S_t$ est la **saisonnalité** (schéma périodique)
+
+- $Z_t$ sont les **résidus** que l'on souhaite idéalement **centré en 1** et de **faible variabilité constante**.
+
+
+
+### Tendance générale par moyenne mobile
+
+On reprend l'estimation de la tendance par moyennes mobiles d'ordre 12 (saisonnalité supposée) calculée dans le modèle additif.
+
+```{r, echo=FALSE}
+plot(job.ts.tendance, 
+     main="Série d'étude - tendance générale par moyenne mobile",
+     col=col_ts)
+abline(job.ts.tendance.reg, col="darkseagreen4")
+```
+
+
+### Saisonnalité
+
+La saisonnalité est obtenue en **divisant** la série par la tendance générale calculée précédemment.
+
+```{r}
+job.ts.mult.saisonnalite <- job.ts.study/job.ts.tendance
+```
+
+
+```{r, echo=FALSE}
+plot(job.ts.mult.saisonnalite,
+     main="Série d'étude - Saisonnalité (modèle multiplicatif)",
+     col=col_ts)
+```
+
+```{r, echo=FALSE}
+m <- t(matrix(data=job.ts.mult.saisonnalite, nrow=12))
+job.ts.mult.saisonnalite.mean <- colMeans(m, na.rm=TRUE)
+plot(as.ts(job.ts.mult.saisonnalite.mean),
+     main="Série d'étude - Saisonnalité moyenne (modèle multiplicatif)",
+     ylab="Postes vacants") ## on répete la saisonnalité moyenne sur 11 an
+```
+
+
+On visualise ici la saisonnalité sur l'ensemble de la série d'une part et la saisonnalité moyenne sur les 11 années de la série d'étude.
+
+Le schéma imaginé dans le chapitre *monthplot* est bien
+
+- une saisonnalité à 3 pics,
+
+- de fortes baisses en août et décembre,
+
+- une reprise en janvier,
+
+### Bruit résiduel
+
+Le bruit résiduel est la série d'étude divisée par la tendance générale puis la saisonnalité moyenne.
+
+```{r}
+job.ts.mult.random <- (job.ts.study / job.ts.tendance) / job.ts.mult.saisonnalite.mean
+```
+
+```{r, echo=FALSE}
+plot(job.ts.mult.random,
+     main="Série d'étude - bruit résiduel (modèle multiplicatif)",
+     col=col_ts)
+
+abline(h=1, col="orange")
+```
+
+```{r}
+mean(job.ts.mult.random, na.rm=TRUE)
+```
+Le bruit résiduel est bien **centré en 1** et présente une **variabilité plutôt faible et stable**, qui pourrait laisser penser à un bruit blanc.
+
+
+### Décomposition automatique
+
+On décompose la série d'étude grâce à la fonction *decompose*.
+
+```{r}
+decomposition_multiplicative=decompose(job.ts.study, type="multiplicative")
+```
+
+
+```{r, echo=FALSE}
+plot(decomposition_multiplicative)
+abline(v=2009, col=col_event, lwd=2)
+abline(v=2019, col=col_event, lwd=2, lty=2)
+abline(v=2020, col=col_event, lwd=2, lty=2)
+```
+
+
+La décomposition automatique reprend les graphes introduits dans les chapitres précédents (Tendance, saisonnalité, erreur).
+
+Au vu du **bruit résiduel centré en 1 et de variance stable**, une **modélisation multiplicative** semble aussi être une **bonne approche de la série**.
+
+
+## Conclusion
+
+L'analyse exploratoire fait apparaître une série à **tendance légèrement croissante** et une **saisonnalité à 12 mois** avec de potentielles corrélations à 3 mois.
+
+Les 2 modélisations descriptives amènent toutes les 2 à des **résidus centrés et de faible variance constante à l'oeil** ; il est difficile de statuer sur une meilleure approche entre la méthode additive et multiplicative. La recherche du meilleur modèle de lissage exponentiel devrait apporter un éclairage sur ce point.
+
+
+\newpage
+
+# Lissage Exponentiel
+
+Ce chapitre a pour objet la modélisation par lissage exponentiel de la série d'étude. 
+
+Il s'agira
+
+- d'identifier sur la série d’entraînement des modèles de lissage exponentiel candidats à la prédiction
+
+- de repérer automatiquement le modèle le plus performant selon l'algorithme de la fonction *ets*
+
+- de choisir le meilleur modèle selon les critères AIC, AICc et BIC
+
+## Modélisation sur la série d'entraînement (Jan 2009 - Déc 2018)
+
+### Modèles candidats
+
+
+```{r, fig.height=4, fig.width=6, fig.align='center', echo=FALSE}
+
+plot(job.ts.study,
+     main=main_chrono_study)
+
+```
+
+
+Afin de déterminer "à l'oeil" le meilleur modèle, on note les points suivants :
+
+- la saisonnalité est bien présente ; néanmoins son amplitude est fluctuante au fil du temps (plus faible dans les années 2013-2015, plus forte sinon. On la prendra de préférence **multiplicative**.
+
+- on prendra le parti de choisir une **erreur multiplicative** en concordance 
+
+- Le cas de la tendance est plus complexe ; sa fluctuation locale à la hausse et à la baisse ne permet pas de déterminer "à l'oeil" sa nature. On prend le parti de modéliser les cas de figure suivants
+
+  - une tendance localement linéaire qu'on choisira additive et multiplicative (dans les 2 cas, on laissera l'ajustement déterminé si un amorti est requis)
+  
+  - un modèle sans tendance, dans l'hypothèse où la meilleure modélisation repose sur une "simple" mise à jour du niveau.
+  
+  
+Les modèles "candidats" seront donc les suivants:
+
+- **MAM** : Erreur Multiplicative, Tendance Additive (possiblement avec amorti), Saisonnalité Multiplicative
+
+- **MMM** : Erreur Multiplicative, Tendance Multiplicative (possiblement avec amorti), Saisonnalité Multiplicative
+
+- **MNM** : Erreur Multiplicative, sans tendance (N), Saisonnalité Multiplicative
+
+
+### Modèle MAM
+
+```{r}
+modele.le.MAM.train <- ets(job.ts.train, model="MAM")
+```
+
+```{r, echo=FALSE}
+summary(modele.le.MAM.train)
+```
+
+```{r, echo=FALSE}
+autoplot(modele.le.MAM.train)
+```
+
+Les paramètres ajustés $\alpha$, $\beta$ et $\gamma$ sont relativement faibles :
+
+- La pente et la saisonnalité évoluent peu ($\beta$ et $\gamma$ sont presque nuls).
+
+- Seul le niveau évolue sans néanmoins dépendre fortement du passé récent ($\alpha$ < 0.4).
+
+**prévisions à 12 mois**
+
+```{r}
+predictions.le.MAM.test <- forecast(modele.le.MAM.train, h=12)
+```
+
+```{r, echo=FALSE}
+plot(predictions.le.MAM.test, 
+     main="Lissage exponentiel (M,Ad,M) - prédiction de l'année 2019",
+     cex.main=0.8)
+
+points(job.ts.test, type="l")
+```
+
+```{r, echo=FALSE}
+plot(job.ts.test, ylim=range(job.ts.test, predictions.le.MAM.test$lower,predictions.le.MAM.test$upper),col=col_ts, lwd=2,
+     main="Lissage exponentiel (M,Ad,M) - prédiction de l'année 2019",
+     pch=20, type="b",
+     cex.main=0.9)
+
+points(predictions.le.MAM.test$mean, col=col_le, lwd=1, type="l")
+points(predictions.le.MAM.test$lower[,2], col=col_le, lwd=1, type="l", lty=2)
+points(predictions.le.MAM.test$upper[,2], col=col_le, lwd=1, type="l", lty=2)
+
+legend("bottomleft", 
+       legend=c("observé","prédictions","IC 95%"), 
+       col=c("black", col_le, col_le),
+       lty=c(1, 1, 2),
+       cex=0.7)
+```
+
+L'ensemble des valeurs observées dans la série de test sont incluses dans l'intervalle de confiance à 95%.
+
+Les prédictions jusqu'en Juillet sont plutôt distantes des valeurs observées mais le modèle offre de bonnes performances dans ses prédictions d'août à décembre.
+
+
+### Modèle MMM
+
+```{r}
+modele.le.MMM.train <- ets(job.ts.train, model="MMM")
+```
+
+```{r, echo=FALSE}
+summary(modele.le.MMM.train)
+```
+
+```{r, echo=FALSE}
+autoplot(modele.le.MMM.train)
+```
+
+On note que la fonction *ets* a préféré considérer un amorti pour l'ajustement des paramètres **(modèle M, Md, M)**.
+
+Les paramètres ajustés $\alpha$, $\beta$ et $\gamma$ sont à nouveau relativement faibles:
+
+- La pente et la saisonnalité évoluent peu ($\beta$ et $\gamma$ sont presque nuls).
+
+- Seul le niveau évolue sans néanmoins dépendre fortement du passé récent ($\alpha$ < 0.4).
+
+
+**prévisions à 12 mois**
+
+```{r}
+predictions.le.MMM.test <- forecast(modele.le.MMM.train, h=12)
+```
+
+
+
+```{r, echo=FALSE}
+plot(predictions.le.MMM.test,
+     main="Lissage exponentiel (M,Md,M) - prédiction de l'année 2019",
+     cex.main=0.9)
+
+points(job.ts.test, type="l")
+```
+
+```{r, echo=FALSE}
+plot(job.ts.test, ylim=range(job.ts.test,                             
+                             predictions.le.MMM.test$lower,
+                             predictions.le.MMM.test$upper),
+     col=col_ts, lwd=2,
+     main="Lissage exponentiel (M,Md,M) - prédiction de l'année 2019",
+     pch=20, type="b",
+     cex.main=0.9)
+
+points(predictions.le.MMM.test$mean, col=col_le, lwd=1, type="l")
+points(predictions.le.MMM.test$lower[,2], col=col_le, lwd=1, type="l", lty=2)
+points(predictions.le.MMM.test$upper[,2], col=col_le, lwd=1, type="l", lty=2)
+
+legend("bottomleft", 
+       legend=c("observé","prédictions","IC 95%"), 
+       col=c("black", col_le, col_le),
+       lty=c(1, 1, 2),
+       cex=0.7)
+```
+
+L'ensemble des valeurs observées dans la série de test sont incluses dans l'intervalle de confiance à 95%.
+
+Les prédictions sont plutôt distantes des valeurs observées, y compris d'août à décembre compte tenu de la meilleure performance du modèle (M,A,M) précédent.
+
+
+### Modèle MNM
+
+```{r}
+modele.le.MNM.train <- ets(job.ts.train, model="MNM")
+```
+
+```{r, echo=FALSE}
+summary(modele.le.MNM.train)
+```
+
+```{r, echo=FALSE}
+autoplot(modele.le.MNM.train)
+```
+
+
+Les paramètres ajustés $\alpha$ et $\gamma$ sont relativement faibles:
+
+- La saisonnalité évolue peu ($\gamma$ est presque nul).
+
+- Le niveau évolue sans dépendre fortement du passé récent ($\alpha$ < 0.4).
+
+
+**prévisions à 12 mois**
+
+
+```{r}
+predictions.le.MNM.test <- forecast(modele.le.MNM.train, h=12)
+```
+
+
+```{r, echo=FALSE}
+plot(predictions.le.MNM.test,
+     main="Lissage exponentiel (M,N,M) - prédiction de l'année 2019",
+     cex.main=0.9)
+
+points(job.ts.test, type="l")
+```
+
+```{r, echo=FALSE}
+plot(job.ts.test, 
+     ylim=range(job.ts.test, 
+                predictions.le.MNM.test$lower,
+                predictions.le.MNM.test$upper),
+     col=col_ts, lwd=2,
+     main="Lissage exponentiel (M,N,M) - prédiction de l'année 2019",
+     pch=16, type="b",
+     cex.main=0.9)
+
+points(predictions.le.MNM.test$mean, 
+       col=col_le, lwd=1, type="l")
+
+points(predictions.le.MNM.test$lower[,2], 
+       col=col_le, lwd=1, type="l", lty=2)
+
+points(predictions.le.MNM.test$upper[,2], 
+       col=col_le, lwd=1, type="l", lty=2)
+
+legend("bottomleft", 
+       legend=c("observé","prédictions","IC 95%"), 
+       col=c("black", col_le, col_le),
+       lty=c(1, 1, 2),
+       cex=0.7)
+
+```
+
+A nouveau, l'ensemble des valeurs observées dans la série de test sont incluses dans l'intervalle de confiance à 95%.
+
+Les prédictions jusqu'en Juillet sont plutôt distantes des valeurs observées.
+
+Néanmoins les prédictions d'août à décembre sont les meilleures proposées jusqu'à présent. 
+
+
+### Modèle suggéré par R
+
+```{r}
+modele.le.ZZZ.train <- ets(job.ts.train, model="ZZZ")
+```
+
+```{r, echo=FALSE}
+summary(modele.le.ZZZ.train)
+```
+
+```{r, echo=FALSE}
+autoplot(modele.le.ZZZ.train)
+```
+
+Le modèle estimé comme le meilleur par la fonction *ets* (selon le critère par défaut AICc) est **(M, Ad, A)** c-à-d
+
+- Une erreur multiplicative (M)
+
+- Une tendance additive avec amorti (Ad)
+
+- Une saisonnalité additive (A)
+
+On note que contrairement à nos modèles "à l'oeil", la fonction *ets* a estimé qu'une **saisonnalité additive** était plus pertinente selon le critère AICc.
+
+Les paramètres ajustés $\alpha$, $\beta$ et $\gamma$ restent faibles.
+
+- La pente et la saisonnalité évoluent peu ($\beta$ et $\gamma$ sont presque nuls).
+
+- Seul le niveau évolue sans dépendre fortement du passé récent ($\alpha$ < 0.3).
+
+
+**prévisions à 12 mois sur la série de test (2019)**
+
+```{r}
+predictions.le.ZZZ.test <- forecast(modele.le.ZZZ.train, h=12)
+```
+
+
+```{r, echo=FALSE}
+predictions.le.MAdA.test <- predictions.le.ZZZ.test
+```
+
+```{r, echo=FALSE}
+plot(predictions.le.ZZZ.test,
+     main="Lissage exponentiel (M,Ad,A) - prédiction de l'année 2019",
+     cex.main=0.9)
+
+points(job.ts.test, type="l")
+```
+
+```{r, echo=FALSE}
+plot(job.ts.test, ylim=range(job.ts.test, predictions.le.ZZZ.test$lower,predictions.le.ZZZ.test$upper),col=col_ts, lwd=2,
+     main="Lissage exponentiel (M,Ad,A) - prédiction de l'année 2019",
+     pch=20, type="b",
+     cex.main=0.9)
+
+points(predictions.le.ZZZ.test$mean, col=col_le, lwd=1, type="l")
+points(predictions.le.ZZZ.test$lower[,2], col=col_le, lwd=1, type="l", lty=2)
+points(predictions.le.ZZZ.test$upper[,2], col=col_le, lwd=1, type="l", lty=2)
+
+legend("bottomleft", 
+       legend=c("observé","prédictions","IC 95%"), 
+       col=c("black", col_le, col_le),
+       lty=c(1, 1, 2),
+       cex=0.7)
+
+
+```
+
+L'ensemble des valeurs observées dans la série de test sont incluses dans l'intervalle de confiance à 95%.
+
+Le modèle identifié par R propose des performances similaires aux modèles étudiés précédemment.
+
+
+## Prédiction de la série test 2019 - Choix du modèle
+
+
+```{r, echo=FALSE}
+plot(job.ts.test, ylim=range(job.ts.test, predictions.le.MAM.test$lower,predictions.le.MAM.test$upper),col=col_ts, lwd=2,
+     main="Lissage exponentiel - comparaison des modèles",
+     cex.main=0.9, type="b", pch=20)
+
+points(predictions.le.MAM.test$mean, col="royalblue", lwd=1, type="l")
+points(predictions.le.MMM.test$mean, col="orange", lwd=1, type="l")
+points(predictions.le.MNM.test$mean, col="brown", lwd=1, type="l")
+points(predictions.le.ZZZ.test$mean, col="darkturquoise", lwd=1, type="l")
+
+legend("topright", 
+       legend=c("observé", "M,Ad,M", "M,Md,M", "M,N,M", "M,Ad,A"), 
+       col=c("black", "royalblue","orange", "brown", "darkturquoise"), 
+       pch="_", cex=0.7)
+```
+
+
+
+
+```{r, echo=FALSE}
+table_modeles <- data.frame( nom=c("M,Ad,M", "M,Md,M", "M,N,M", "M,Ad,A selon R"), 
+                             aic=c(modele.le.MAM.train$aic, modele.le.MMM.train$aic, modele.le.MNM.train$aic, modele.le.ZZZ.train$aic),
+                             aicc=c(modele.le.MAM.train$aicc, modele.le.MMM.train$aicc, modele.le.MNM.train$aicc, modele.le.ZZZ.train$aicc),
+                             bic=c(modele.le.MAM.train$bic, modele.le.MMM.train$bic, modele.le.MNM.train$bic, modele.le.ZZZ.train$bic))
+```
+
+```{r, eval=FALSE, echo=FALSE}
+table_modeles %>% 
+  kable(booktabs = T, caption = "Résumé des modèles")
+
+```
+
+
+```{r, echo=FALSE}
+table_modeles %>% 
+  kable("latex", booktabs = T, caption = "Résumé des modèles") %>%
+  kable_styling(latex_options = c("striped", "HOLD_position"))
+```
+
+
+D'après la comparaison graphique, l'ensemble des modèles performe de façon similaire.
+
+On note cependant que le modèle (M, N, M) se comporte mieux après septembre, en proposant des prédictions très proches des observations.
+
+Néanmoins, si l'on se base sur les critères de sélection de modèles, pour l'ensemble des critères AIC, AICc, BIC, le **modèle (M,Ad,A)** identifié par R avec une saisonnalité additive est le modèle disposant du meilleur pouvoir prédictif. 
+
+On prend le parti de faire confiance aux critères de sélection et on choisit le modèle (M,Ad,A) pour représenter la catégorie "lissage exponentiel".
+
+## Entraînement sur la série d'étude entière (Jan 2009 - Dec 2019)
+
+Afin de nous assurer de disposer du meilleur modèle de lissage exponentiel sur la série d'étude entière
+
+- on va entraîner le modèle (M,Ad, A) sur la série d'étude entière (Janvier 2009 - Décembre 2019)
+
+- on va utiliser la fonction *ets* pour préciser si ce modèle est bien le meilleur modèle sur l'entièreté de la série d'étude. 
+
+On entraîne le modèle (M,Ad,A) sur la série d'étude entière
+
+```{r}
+modele.le.MAdA.study <- ets(job.ts.study, model="MAA", damped = TRUE)
+```
+
+```{r, echo=FALSE}
+summary(modele.le.MAdA.study)
+```
+
+On cherche maintenant de façon automatique le meilleur modèle sur la série d'étude entière:
+
+```{r}
+modele.le.ZZZ.study <- ets(job.ts.study, model="ZZZ")
+```
+
+```{r, echo=FALSE}
+summary(modele.le.ZZZ.study)
+```
+La fonction *ets* confirme que le **modèle (M,Ad,A)** est bien le meilleur selon le criètre par défaut AICc.
+
+## Conclusion
+
+Le lissage exponentiel propose de bons modèles de prédiction pour notre série d'étude, le meilleur dans notre cas étant un modèle **(M,Ad,A)**.
+
+Même si les prédictions restent relativement distantes des valeurs observées sur la série de test avant septembre, tous les modèles incluent les valeurs observées dans leur intervalle de confiance à 95%.
+
+On notera aussi que les modèles analysés sont tous principalement basés sur la mise à jour du niveau ; ils proposent peu d'évolution de pente ou de saisonnalité. Ils indiquent aussi que la série est relativement peu dépendante de son passé récent.
+
+
+\newpage
+
+# Modèles ARMA
+
+On va maintenant s'atteler à identifier un modèle ARMA pour la série d'étude 
+
+- en identifiant des candidats ARMA ajustés sur la série d'entraînement (Jan 2008 - Dec 2018)
+
+- en identifiant le meilleur prédicteur sur la série test (2019)
+
+- en entraînant le modèle sur la série entière en vue d'un travail sur l'année 2020
+
+  On prendra soin dans cette dernière étape de vérifier que le modèle en question est toujours bien identifié comme le meilleur modèle.
+
+## Stationnarité
+
+L'objet de ce chapitre est d'étudier la **stationnarité** de la série temporelle d'étude (Jan 2008 - Dec 2019).
+
+Pour cela on va 
+
+- visualiser les caractéristiques du chronogramme et conclure ou non à la stationnarité,
+
+- confirmer la conclusion avec la visualisation de la fonction de d'auto-corrélation empirique (corrélogramme)
+
+Dans le cas (probable) où la série s'avérerait non-stationnaire, on procédera dans un second temps à une transformation de la série pour la faire tendre vers la stationnarité après modélisation.
+
+### Chronogramme et corrélogramme
+
+
+```{r, echo=FALSE}
+plot(job.ts.study,
+     main=main_chrono_study,
+     col=col_ts,
+     cex.main=0.9)
+```
+
+Un processus stationnaire doit présenter un chronogramme dont la moyenne et la variance sont constante dans le temps.
+
+
+Or le chronogramme présente une série
+
+- dont la moyenne n'est pas constante dans le temps
+
+- dont la variance n'est pas constante dans le temps
+
+On ne peut pas conclure à la stationnarité de la série au vu du chronogramme.
+
+Pour confirmer la tendance, on visualise le corrélogramme.
+
+```{r, echo=FALSE}
+acf(job.ts.study, type="correlation",
+    main="Corrélogramme de la série étudiée (3 ans)", lag.max=40)
+```
+
+Si le processus était stationnaire, il présenterait un corrélogramme
+
+- dont la 1ère valeur est 1 (c'est le cas quelle que soit la série)
+
+- dont les valeurs pour des décalages temporels supérieurs ou égaux à 1 convergent exponentiellement sous la barre de significativité à 95%.
+
+Or on note ici 
+
+- une décroissance lente du lien linéaire de la série avec son passé
+
+- des rebonds récurrents laissant imaginer une **saisonnalité de 12 mois**
+
+Le corrélogramme confirme le **comportement non-stationnaire** de la série temporelle.
+
+
+### Transformation de la série 
+
+La série n'est pas stationnaire.
+
+L'idée de la transformation est d'entamer une démarche qui permettra de réduire la série étudiée 
+à des résidus stationnaires.
+
+4 étapes pour aller dans ce sens:
+
+- Vérifier la normalité de la série et stabiliser la variance
+
+  La normalité de la série permet d'assurer que l'algorithme d'optimisation converge selon la méthode du maximum de vraisemblance (choisie par défaut par la méthode Arima).
+  
+  La stabilisation de la variance qui en découlera permettra de tendre vers la stationnarité de la série après modélisation.
+
+- Entamer l'explication de l'information contenue dans la série en différenciant la tendance et la saisonnalité
+
+- Sauf à ce que la série différenciée aboutisse à un processus stationnaire, s’atteler à modéliser le reste d'information par un modèle ARMA
+
+- Valider que les résidus après modélisation ARMA sont bien un bruit blanc stationnaire. 
+
+
+
+#### Normalité et stabilisation de la variance
+
+:
+
+Dans l'optique de la modélisation de la série par un modèle ARMA, il est nécessaire d'examiner la normalité de la série par un test de d'Agostino.
+
+```{r, echo=FALSE, warning=FALSE}
+require(fBasics)
+aa <- dagoTest(job.ts.study)
+aa
+```
+
+La p-valeur Omnibus du test de d'Agostino est faible (<5%), on rejette l'hypothèse H0 : Normalité de la série.
+
+Pour tenter d'améliorer le résultat, on applique des transformations **logarithme** et **racine carrée** à la série d'étude 
+pour identifier une éventuelle amélioration de la normalité.
+
+Les résultats du test de d'Agostino (Omnibus) après transformation sont les suivants
+
+```{r, echo=FALSE}
+
+a1 <- aa@test$p.value[1]
+a2=dagoTest(log(job.ts.study))@test$p.value[1]
+a3=dagoTest(sqrt(job.ts.study))@test$p.value[1]
+aa=as.matrix(c(a1,a2,a3))
+rownames(aa)=c('Serie brute','log','racine')
+colnames(aa)="p-values"
+aa
+```
+
+
+Effectivement, les transformations "normalisantes" ont eu l'effet escompté ; les p-valeurs du test de d'Agostino pour les transformations **log** et **racine carrée** sont maintenant > 5% ; on ne rejette pas la normalité de la série pour ces 2 transformations.
+
+La transformation étant plus prononcée pour la transformation logarithmique, on appliquera pour la suite de l'étude une transformation **log** à la série, ce qui stabilisera la variance de la série d'étude.
+
+```{r}
+# stabilisation de la série d'étude (Jan 2009 - Dec 2019)
+job.ts.study.log <- log(job.ts.study)
+
+# stabilisation de la série d'entraînement (Jan 2009 - Dec 2018)
+job.ts.train.log <- log(job.ts.train)
+
+# stabilisation de la série de test (2019)
+job.ts.test.log <- log(job.ts.test)
+```
+
+**Stabilisation de la variance**
+
+La transformation log étant appliquée, vérifions que la variabilité des données de la série a bien été atténuée.
+
+
+```{r, echo=FALSE}
+# visualisation du chronogramme de la série stabilisée
+plot(job.ts.train.log,
+     main="Chronogramme - Série temporelle à variance stabilisée (log)",
+     col=col_ts,
+     cex.main=0.9)
+```
+
+Les variations des données sont maintenant d'amplitude similaire ; l'opération de stabilisation de la variance est satisfaisante.
+
+
+#### Elimination de la saisonnalité
+
+:
+
+Dans un 1er temps, 
+
+- on va confirmer la saisonnalité de la série stabilisée par un lag-plot
+
+- on va différencier la série pour éliminer la saisonnalité estimée
+
+
+```{r, echo=FALSE}
+lag.plot(job.ts.train.log, lags = 12,
+         main="lag.plot de la série d'entraînement stabilisée par un log")
+```
+
+On note la plus forte corrélation de la série à un **décalage de 12 mois**. C'est cette valeur que l'on va considérer comme saisonnalité.
+
+
+**Différenciation saisonnière** basée sur la **saisonnalité à 12 mois**, sur la série à variance stabilisée.
+
+```{r}
+job.ts.train.log.sans_saison <- diff(job.ts.train.log, lag=12, difference=1)
+```
+
+```{r, echo=FALSE}
+plot(job.ts.train.log.sans_saison,
+     main="Série d'entraînement stabilisée, avec tendance, sans saisonnalité",
+     col=col_ts,
+     cex.main=0.9)
+```
+
+Le chronogramme de la version sans saisonnalité présente une tendance qu'on va maintenant supprimer.
+
+
+#### Elimination de la tendance
+
+:
+
+Le chronogramme de la série sans saisonnalité laisse penser à une tendance a priori linéaire, qu'on va tenter d'éliminer par une **différenciation d'ordre 1**.
+
+L'élimination de la tendance à la série privée de saisonnalité donne les **résidus** de la série temporelle :
+
+```{r}
+job.ts.train.log.residus <- diff(job.ts.train.log.sans_saison, lag=1, difference=1)
+```
+
+
+**Chronogramme de la série sans tendance, sans saisonnalité (i.e. les résidus):**
+
+```{r, echo=FALSE}
+plot(job.ts.train.log.residus,
+     main="Série d'entraînement sans saisonnalité, ni tendance (résidus)",
+     col=col_ts,
+     cex.main=0.8)
+
+abline(h=0, col="orange")
+```
+
+```{r}
+mean(job.ts.train.log.residus)
+```
+
+
+La question que l'on peut se poser sur les résidus de la série sans tendance et sans saisonnalité, est "sont-ils un bruit blanc."
+
+S'il s'agit d'un bruit blanc, le chronogramme doit être centré sur 0 et de variance constante.
+
+Dans notre cas, 
+
+- les données sont bien centrées en 0 
+
+- bien que ne présentant pas des extrêmes marqués, la variabilité des données ne peut pas être considérée comme constante ; la bande dans laquelle les valeurs évoluent n'est pas constante.
+
+
+On soupçonne donc une variance non constante ; il reste vraisemblablement de l'information non expliquée dans ces résidus.
+
+Pour aller plus loin, on se propose
+
+- d'analyser de façon plus précise la blancheur des résidus de la série diminuée de la tendance et de la saisonnalité
+
+- et dans le cas où ils ne seraient pas un bruit blanc, de modéliser ces résidus avec un modèle ARMA
+
+
+### Analyse des résidus (série sans tendance ni saisonnalité)
+
+
+```{r, echo=FALSE}
+acf(job.ts.train.log.residus, type="correlation",
+    main="Corrélogramme des résidus",
+    col=col_ts, lag.max=40)
+```
+
+
+Dans le cas où il s'agirait d'un bruit blanc, le corrélogramme présenterait
+
+- 1 première valeur égale à 1 (condition toujours vérifiée, quelle que soit la série)
+
+- des valeurs qui convergent exponentiellement sous la bande de significativité de 95%.
+
+- un maximum de 5% des corrélations en dehors de la bande de significativité
+
+Ici, la convergence est réelle ; néanmoins on soupçonne que **plus de 5% des valeurs** sont en dehors de la bande des 95%.
+
+Les résidus ne sont vraisemblablement **pas un bruit blanc**.
+
+Le **test Portmanteau (test de blancheur)** devrait confirmer l'hypothèse.
+
+Le test oppose
+
+- H0 : "toutes les auto-corrélations sont nulles"
+
+- à H1 : "Il existe une auto-corrélation non nulle"
+
+```{r}
+Box.test(job.ts.train.log.residus, 
+         lag=length(job.ts.train.log.residus)/4,
+         type="Box-Pierce")
+```
+
+En l'occurrence, la **p-valeur < 5%** permet de **rejeter H0**. 
+
+Il existe au moins une corrélation non nulle : **les résidus NE sont PAS un bruit blanc**.
+
+**Il reste de l'information à modéliser dans les résidus.**
+
+On va tenter dans le chapitre suivant une **modélisation de ce bruit par un modèle ARMA**.
+
+## Modélisation des résidus sur la série d'entraînement (Jan 2009 - Déc 2018)
+
+La série temporelle diminuée de la tendance et de la saisonnalité présente des résidus qui ne sont pas un bruit blanc.
+
+Il reste de la variabilité inexpliquée dans ces résidus qu'il s'agit maintenant de modéliser par un modèle ARMA pour permettre la prédiction de nouvelles données.
+
+
+
+### ACF et PACF
+
+Pour déterminer si les résidus peuvent être modélisés par un processus AR et/ou MA, on visualise
+
+- la fonction d'auto-corrélation des résidus (ACF)
+
+- la fonction d'auto-corrélation partielle (PACF)
+
+
+```{r, echo=FALSE}
+
+par(mfrow=c(1,2))
+
+acf(job.ts.train.log.residus,
+    main="ACF des résidus", lag.max=40)
+
+pacf(job.ts.train.log.residus,
+     main="PACF des résidus", lag.max=40)
+
+par(mfrow=c(1,1))
+```
+
+
+Un **processus AR(p) "pur"** présenterait 
+
+  - une ACF convergeant exponentiellement vers 0
+
+  - une PACF avec un point de rupture "décalé" au-delà duquel les valeurs seraient nulles 
+
+Un **processus MA(q) "pur"** présenterait 
+
+  - une ACF avec un point de rupture "décalé" au-delà duquel les valeurs seraient nulles.
+  
+  - une PACF convergeant exponentiellement vers 0
+
+
+Ni l'ACF, ni la PACF ne présente ces caractéristiques exclusives :
+
+- Les convergences exponentielles sont bien constatées
+
+- Des rebonds significativement non nuls sont visibles de façon récurrente le long de l'ACF et de la PACF 
+
+Ainsi on imagine qu'un **processus mixte de type ARMA**  serait le plus adéquat pour modéliser les résidus.
+
+On se propose de dessiner un 1er modèle ARMA(p,q).
+
+### Modèle ARMA(p,q) initial
+
+```{r, echo=FALSE}
+
+par(mfrow=c(1,2))
+
+acf(job.ts.train.log.residus,
+    main="ACF des résidus")
+abline(v=0.3, col=col_event, lwd=2, lty=2)
+
+pacf(job.ts.train.log.residus,
+     main="PACF des résidus")
+abline(v=0.2, col=col_event, lwd=2, lty=2)
+
+par(mfrow=c(1,1))
+```
+
+ACF et PACF ne présentent pas les caractéristiques des processus AR et MA "purs".
+
+Néanmoins on peut en tirer des tendances qui peuvent dessiner un modèle ARMA mixte initial :
+
+- L'ACF présente une décroissance exponentielle pour laquelle les valeurs entrent de façon persistante dans la bande de significativité de 95%  **à partir d'un décalage h=4** ; ce sont les caractéristiques d'un **processus moyenne mobile MA(3)**.
+
+- La PACF présente une décroissance exponentielle pour laquelle les valeurs entrent de façon persistante dans la bande de significativité de 95% **à partir d'un décalage h=3** ; ce sont les caractéristiques d'un d'un **processus auto-régressif AR(2)**. 
+
+Ainsi, on peut imaginer un **modèle initial** basé
+
+- sur une **composante auto-régressive AR d'ordre 2** 
+
+- sur une **composante moyenne mobile MA d'ordre 3**
+
+
+**ARMA(2,3)** sera donc le **modèle initial** issu de l'intuition.
+
+### ARMA(2,3)
+
+```{r}
+# ajustement ARMA(3,2)
+modele.arma.2_3 <- Arima(job.ts.train.log.residus, order=c(2,0,3))
+```
+
+
+```{r, echo=FALSE}
+modele.arma.2_3
+```
+
+
+```{r}
+# Significativité des coefficients
+t_stat(modele.arma.2_3)
+```
+
+```{r}
+# corrélation des termes
+cor.arma(modele.arma.2_3)
+
+```
+
+```{r}
+
+# Test de blancheur des résidus
+Box.test(modele.arma.2_3$residuals, 
+         lag=length(modele.arma.2_3$residuals)/4, 
+         type="Box-Pierce")
+```
+
+Après ajustement du **modèle ARMA(2,3)**, 
+
+- **MA1, MA2, MA3** sont considérés comme **non-significatifs** ;
+
+- des **problèmes de corrélation** entre certains termes (>0.9) sont détectés ;
+
+- les **résidus** après modélisation sont un **bruit blanc** ;
+
+  la **p-valeur du test de blancheur** est **> 5%**, et **on NE rejette PAS l'hypothèse** que les résidus après modélisation par un processus ARMA(2,3) soient un **bruit blanc**.
+
+```{r, echo=FALSE}
+
+# Visualisation
+plot(job.ts.train.log.residus,
+     main="Série d'entraînement : modélisation ARMA(2,3)",
+     col=col_ts,
+     cex.main=0.8)
+points(modele.arma.2_3$residuals, col=col_sarima, type="l")
+       
+```
+
+```{r, echo=FALSE}
+par(mfrow=c(1,2))
+
+acf(modele.arma.2_3$residuals,
+    main="ARMA(2,3) - ACF", lag.max=25)
+
+pacf(modele.arma.2_3$residuals,
+     main="ARMA(2,3) - PACF", lag.max=25)
+
+par(mfrow=c(1,1))
+```
+
+Les données estimées suivent bien la série temporelle.
+
+ACF et PACF des résidus après **modélisation ARMA(2,3)** présentent des caractéristiques satisfaisantes pour un processus stationnaire :
+
+- décroissance exponentielle, 
+
+- des valeurs respectant la bande de significativité de 95% 
+
+Néanmoins on note un **rebond de corrélation à chaque saisonnalité**. Il reste vraisemblablement de l'information saisonnière non expliquée par le modèle.
+
+Pour la suite, on prend le parti de **descendre l'ordre de la composante MA** (sachant que MA3 est considéré comme non significatif).
+
+### ARMA(2,2)
+
+```{r}
+# ajustement ARMA(2,2)
+modele.arma.2_2 <- Arima(job.ts.train.log.residus, order=c(2,0,2))
+```
+
+
+```{r, echo=FALSE}
+modele.arma.2_2
+```
+
+```{r}
+
+# Significativité des coefficients
+t_stat(modele.arma.2_2)
+
+```
+
+```{r}
+
+# corrélation des termes
+cor.arma(modele.arma.2_2)
+
+```
+
+```{r}
+
+# Test de blancheur des résidus
+Box.test(modele.arma.2_2$residuals, 
+         lag=length(modele.arma.2_2$residuals)/4, 
+         type="Box-Pierce")
+```
+
+Après ajustement du **modèle ARMA(2,2)**, 
+
+- **MA1, MA2** sont considérés comme **non-significatifs** 
+
+- des **problèmes de corrélation** entre certains termes, notamment entre MA1 et AR1 (>0.9) sont détectés
+
+- les **résidus** après modélisation sont un **bruit blanc** ;
+
+  la **p-valeur du test de blancheur** est **> 5%**, et **on NE rejette PAS l'hypothèse** que les résidus après modélisation par un processus ARMA(2,2) soient un **bruit blanc**.
+
+```{r, echo=FALSE}
+# Visualisation
+plot(job.ts.train.log.residus,
+     main="Série d'entraînement : modélisation ARMA(2,2)",
+     col=col_ts,
+     cex.main=0.8)
+points(modele.arma.2_2$residuals, col=col_sarima, type="l")
+       
+```
+
+```{r, echo=FALSE}
+par(mfrow=c(1,2))
+
+acf(modele.arma.2_2$residuals,
+    main="ARMA(2,2) - ACF", lag.max=25)
+
+pacf(modele.arma.2_2$residuals,
+     main="ARMA(2,2) - PACF", lag.max=25)
+
+par(mfrow=c(1,1))
+```
+
+Les données estimées suivent bien la série temporelle.
+
+ACF et PACF des résidus après **modélisation ARMA(2,2)** présentent des caractéristiques satisfaisantes pour un processus stationnaire :
+
+- décroissance exponentielle, 
+
+- des valeurs respectant la bande de significativité de 95% 
+
+Néanmoins on note un **rebond de corrélation à chaque saisonnalité**. Il reste vraisemblablement de l'information saisonnière non expliquée par le modèle.
+
+Pour la suite, on prend le parti de **descendre l'ordre de la composante MA** (sachant que MA2 est considéré comme non significatif).
+
+
+### ARMA(2,1)
+
+```{r}
+# ajustement ARMA(2,1)
+modele.arma.2_1 <- Arima(job.ts.train.log.residus, order=c(2,0,1))
+```
+
+
+```{r, echo=FALSE}
+modele.arma.2_1
+```
+
+```{r}
+
+# Significativité des coefficients
+t_stat(modele.arma.2_1)
+
+```
+
+```{r}
+
+# corrélation des termes
+cor.arma(modele.arma.2_1)
+
+```
+
+```{r}
+
+# Test de blancheur des résidus
+Box.test(modele.arma.2_1$residuals, 
+         lag=length(modele.arma.2_1$residuals)/4, 
+         type="Box-Pierce")
+```
+
+Après ajustement du **modèle ARMA(2,1)**, 
+
+- **MA1** est considéré comme **non-significatif**,
+
+- Une corrélation certes < 0.9 entre MA1 et AR1 reste élevée,
+
+- les **résidus** après modélisation sont un **bruit blanc** ;
+
+  la **p-valeur du test de blancheur** est **> 5%**, et **on NE rejette PAS l'hypothèse** que les résidus après modélisation par un processus ARMA(2,1) soient un **bruit blanc**.
+
+```{r, echo=FALSE}
+# Visualisation
+plot(job.ts.train.log.residus,
+     main="Série d'entraînement : modélisation ARMA(2,1)",
+     col=col_ts)
+points(modele.arma.2_1$residuals, col=col_sarima, type="l")
+       
+```
+
+```{r, echo=FALSE}
+par(mfrow=c(1,2))
+
+acf(modele.arma.2_1$residuals,
+    main="ARMA(2,1) - ACF", lag.max=25)
+
+pacf(modele.arma.2_1$residuals,
+     main="ARMA(2,1) - PACF", lag.max=25)
+
+par(mfrow=c(1,1))
+```
+
+Les données estimées suivent bien la série temporelle.
+
+ACF et PACF des résidus après **modélisation ARMA(2,1)** présentent des caractéristiques satisfaisantes pour un processus stationnaire :
+
+- décroissance exponentielle, 
+
+- des valeurs respectant la bande de significativité de 95% 
+
+Néanmoins on note un **rebond de corrélation à chaque saisonnalité**. Il reste vraisemblablement de l'information saisonnière non expliquée par le modèle.
+
+Pour la suite, on prend le parti de **descendre l'ordre de la composante MA** (sachant que MA1 est considéré comme non significatif).
+
+### ARMA(2,0) = AR(2)
+
+```{r}
+# ajustement AR(2)
+modele.arma.2_0 <- Arima(job.ts.train.log.residus, order=c(2,0,0))
+```
+
+
+```{r, echo=FALSE}
+modele.arma.2_0
+```
+
+```{r}
+
+# Significativité des coefficients
+t_stat(modele.arma.2_0)
+
+```
+
+```{r}
+
+# corrélation des termes
+cor.arma(modele.arma.2_0)
+
+```
+
+```{r}
+
+# Test de blancheur des résidus
+Box.test(modele.arma.2_0$residuals, 
+         lag=length(modele.arma.2_0$residuals)/4, 
+         type="Box-Pierce")
+```
+
+Après ajustement du **modèle AR(2)**, 
+
+- **tous les coefficients** sont considérés comme **significatifs**,
+
+- **aucun problème de corrélation** n'est détecté,
+
+- les **résidus** après modélisation sont un **bruit blanc** ;
+
+  la **p-valeur du test de blancheur** est **> 5%**, et **on NE rejette PAS l'hypothèse** que les résidus après modélisation par un processus ARMA(2,0) soient un **bruit blanc**.
+
+```{r, echo=FALSE}
+# Visualisation
+plot(job.ts.train.log.residus,
+     main="Série d'entraînement : modélisation ARMA(2,0)",
+     col=col_ts)
+points(modele.arma.2_0$residuals, col=col_sarima, type="l")
+       
+```
+
+```{r, echo=FALSE}
+par(mfrow=c(1,2))
+
+acf(modele.arma.2_0$residuals,
+    main="ARMA(2,0) - ACF", lag.max=25)
+
+pacf(modele.arma.2_0$residuals,
+     main="ARMA(2,0) - PACF", lag.max=25)
+
+par(mfrow=c(1,1))
+```
+
+
+Les données estimées suivent bien la série temporelle.
+
+ACF et PACF des résidus après **modélisation ARMA(2,0)** présentent des caractéristiques satisfaisantes pour un processus stationnaire :
+
+- décroissance exponentielle, 
+
+- des valeurs respectant la bande de significativité de 95% 
+
+Néanmoins on note un **rebond de corrélation à chaque saisonnalité**. Il reste vraisemblablement de l'information saisonnière non expliquée par le modèle.
+
+De par ses **coefficients significatifs** et la **blancheur des résidus après modélisation**, le **modèle AR(2)** est un **modèle ARMA satisfaisant**.
+
+On se propose maintenant de solliciter les fonctions de sélection automatique **armaselect** et **auto.arima** pour identifier les modèles les meilleurs selon leur algorithme respectif.
+
+### auto-sélection du modèle : armaselect
+
+```{r}
+armaselect(job.ts.train.log.residus)
+```
+
+La majorité des modèles identifiés par **armaselect** n'est **pas exploitable** ; 
+sont proposés des modèles dont l'ordre de la composante moyenne mobile va de 12 à 15.
+
+Néanmoins, *armaselect* a identifié parmi tous ces modèles complexes le **processus AR(2)** qu'il positionne en 2ème position de son classement des meilleurs modèles selon le critère sbc.
+
+### auto-sélection du modèle : auto.arima
+
+```{r}
+modele.arma.autoarima <- auto.arima(job.ts.train.log.residus)
+```
+
+
+```{r, echo=FALSE}
+modele.arma.autoarima
+```
+
+```{r}
+
+# Significativité des coefficients
+t_stat(modele.arma.autoarima)
+
+```
+
+```{r}
+
+# corrélation des termes
+cor.arma(modele.arma.autoarima)
+
+```
+
+```{r}
+
+# Test de blancheur des résidus
+Box.test(modele.arma.autoarima$residuals, 
+         lag=length(modele.arma.autoarima$residuals)/4, 
+         type="Box-Pierce")
+```
+
+Auto-arima détecte un **processus ARMA(2,0)** avec une **composante saisonnière résiduelle** (pressentie dans l'analyse des fonctions d'auto-corrélation des résidus de la série diminuée de la tendance et de la saisonnalité).
+
+Il confirme qu'une modélisation de type **ARMA saisonnière (SARMA)** serait pertinente dans le cas de notre série.
+
+Plutôt que d'étudier le meilleur modèle SARMA, on se propose d'**étudier de façon équivalente les modèles intégrés SARIMA** dans lesquels la tendance sera conservée. C'est l'objet du **chapitre "Modèles SARIMA"**.
+
+
+## Prédiction de la série test 2019 - Choix du modèle ARMA
+
+Afin de déterminer le modèle le plus apte à la prédiction parmi les modèles ARMA identifiés,
+
+- on procède à la prédiction des valeurs de la série de test (année 2019) pour chacun des modèles ARMA,
+
+- on compare visuellement les valeurs prédites et les intervalles de confiance à 95% associés
+
+- on compare les critères de sélection de modèles AIC, AICc et BIC
+
+On note que pour la visualisation des valeurs, on procédera à la "reconstruction" de la série : 
+
+aux valeurs prédites des résidus de la série, **on ajoute la tendance et la saisonnalité** préalablement retirées pour la modélisation ARMA. 
+
+
+```{r}
+
+# Prédictions de la série test (année 2019, horizon=12)
+predictions.test.arma.2_3 <- forecast(modele.arma.2_3, h=12)
+predictions.test.arma.2_2 <- forecast(modele.arma.2_2, h=12)
+predictions.test.arma.2_1 <- forecast(modele.arma.2_1, h=12)
+predictions.test.arma.2_0 <- forecast(modele.arma.2_0, h=12)
+```
+
+```{r, echo=FALSE}
+# Extraction de la Tendance et Saisonnalité sur la série de test (2019)
+# Base sur laquelle seront ajoutées les prédictions des résidus
+job.ts.study.log.sans_saison <- diff(job.ts.study.log, lag=12, difference=1)
+job.ts.study.log.residus <- diff(job.ts.study.log.sans_saison, lag=1, difference=1)
+job.ts.study.log.tendance_saison <- job.ts.study.log - job.ts.study.log.residus
+
+job.ts.test.log.tendance_saison <- window(job.ts.study.log.tendance_saison, 
+                                          start=test_start,
+                                          end=test_end)
+```
+
+
+```{r, echo=FALSE, fig.width=8, fig.height=6}
+
+# Visualisation des prédictions individuelles, avec intervalle de confiance à 95%
+
+par(mfrow=c(2,2))
+
+# ARMA(3,2)
+
+plot(job.ts.test, 
+     main="Prédictions ARMA(2,3)",
+     cex.main=0.8,
+     ylim=range(job.ts.test, 
+                exp(job.ts.test.log.tendance_saison + predictions.test.arma.2_3$lower[,2]), 
+                exp(job.ts.test.log.tendance_saison + predictions.test.arma.2_3$upper[,2])),
+     col=col_ts, lwd=2)
+
+points(exp(job.ts.test.log.tendance_saison + predictions.test.arma.2_3$mean),
+       col=col_arma, lwd=1, type="l")
+
+points(exp(job.ts.test.log.tendance_saison + predictions.test.arma.2_3$lower[,2]),
+       col=col_arma, lwd=1, type="l", lty=2)
+
+points(exp(job.ts.test.log.tendance_saison + predictions.test.arma.2_3$upper[,2]),
+       col=col_arma, lwd=1, type="l", lty=2)
+
+# ARMA(2,2)
+
+plot(job.ts.test, 
+     main="Prédictions ARMA(2,2)",
+     cex.main=0.8,
+     ylim=range(job.ts.test, 
+                exp(job.ts.test.log.tendance_saison + predictions.test.arma.2_2$lower[,2]), 
+                exp(job.ts.test.log.tendance_saison + predictions.test.arma.2_2$upper[,2])),
+     col=col_ts, lwd=2)
+
+points(exp(job.ts.test.log.tendance_saison + predictions.test.arma.2_2$mean),
+       col=col_arma, lwd=1, type="l")
+
+points(exp(job.ts.test.log.tendance_saison + predictions.test.arma.2_2$lower[,2]),
+       col=col_arma, lwd=1, type="l", lty=2)
+
+points(exp(job.ts.test.log.tendance_saison + predictions.test.arma.2_2$upper[,2]),
+       col=col_arma, lwd=1, type="l", lty=2)
+
+# ARMA(2,1)
+
+plot(job.ts.test, 
+     main="Prédictions ARMA(2,1)",
+     cex.main=0.8,
+     ylim=range(job.ts.test, 
+                exp(job.ts.test.log.tendance_saison + predictions.test.arma.2_1$lower[,2]), 
+                exp(job.ts.test.log.tendance_saison + predictions.test.arma.2_1$upper[,2])),
+     col=col_ts, lwd=2)
+
+points(exp(job.ts.test.log.tendance_saison + predictions.test.arma.2_1$mean),
+       col=col_arma, lwd=1, type="l")
+
+points(exp(job.ts.test.log.tendance_saison + predictions.test.arma.2_1$lower[,2]),
+       col=col_arma, lwd=1, type="l", lty=2)
+
+points(exp(job.ts.test.log.tendance_saison + predictions.test.arma.2_1$upper[,2]),
+       col=col_arma, lwd=1, type="l", lty=2)
+
+# ARMA(2,0)
+
+plot(job.ts.test, 
+     main="Prédictions AR(2)",
+     cex.main=0.8,
+     ylim=range(job.ts.test, 
+                exp(job.ts.test.log.tendance_saison + predictions.test.arma.2_0$lower[,2]), 
+                exp(job.ts.test.log.tendance_saison + predictions.test.arma.2_0$upper[,2])),
+     col=col_ts, lwd=2)
+
+points(exp(job.ts.test.log.tendance_saison + predictions.test.arma.2_0$mean),
+       col=col_arma, lwd=1, type="l")
+
+points(exp(job.ts.test.log.tendance_saison + predictions.test.arma.2_0$lower[,2]),
+       col=col_arma, lwd=1, type="l", lty=2)
+
+points(exp(job.ts.test.log.tendance_saison + predictions.test.arma.2_0$upper[,2]),
+       col=col_arma, lwd=1, type="l", lty=2)
+
+par(mfrow=c(1,1))
+
+```
+
+```{r, echo=FALSE}
+# tracé des valeurs observées sur la péridoe de test (2019)
+plot(job.ts.test, col=col_ts, lwd=2,
+     main="ARMA(p,q) - superpostion des prédictions sur l'année 2019",
+     cex.main=0.9, type="b", pch=20)
+
+# Tracé des prédictions
+
+points(exp(job.ts.test.log.tendance_saison + predictions.test.arma.2_3$mean),
+       col="royalblue", lwd=1, type="l")
+
+points(exp(job.ts.test.log.tendance_saison + predictions.test.arma.2_2$mean), 
+       col="orange", lwd=1, type="l")
+
+points(exp(job.ts.test.log.tendance_saison + predictions.test.arma.2_1$mean), 
+       col="brown", lwd=1, type="l")
+
+points(exp(job.ts.test.log.tendance_saison + predictions.test.arma.2_0$mean),
+       col="darkturquoise", lwd=1, type="l")
+
+legend("topright", 
+       legend=c("observé", "ARMA(3,2)", "ARMA(2,2)", "ARMA(2,1)", "AR(2)"), 
+       col=c("black","royalblue","orange", "brown", "darkturquoise"), 
+       pch="_", cex=0.7)
+```
+
+
+```{r, echo=FALSE}
+choix_arma <- cbind(
+              c(modele.arma.2_3$aic, modele.arma.2_3$aicc, modele.arma.2_3$bic),
+              c(modele.arma.2_2$aic, modele.arma.2_2$aicc, modele.arma.2_2$bic),
+              c(modele.arma.2_1$aic, modele.arma.2_1$aicc, modele.arma.2_1$bic),
+              c(modele.arma.2_0$aic, modele.arma.2_0$aicc, modele.arma.2_0$bic))
+
+choix_arma <- round(choix_arma,2)
+
+choix_arma <- rbind ( c("ARMA(2,3)","ARMA(2,2)","ARMA(2,1)","AR(2)"),
+                      choix_arma)
+
+choix_arma <- cbind ( c("","AIC","AICc","BIC"), choix_arma )
+
+
+
+```
+
+```{r, echo=FALSE}
+t(choix_arma) %>% 
+  kable("latex", booktabs = T, caption = "Critères de sélection des modèles ARMA") %>%
+  kable_styling(latex_options = c("striped", "HOLD_position"))
+```
+
+```{r, include=FALSE}
+t(choix_arma) %>% 
+  kable(booktabs = T, caption = "Résumé des modèles ARMA")
+```
+
+
+Tous les modèles présentant des résidus après modélisation ARMA assimilables à un bruit blanc, on les considère tous comme de bons candidats pour prédire l'année 2019 (série de test).
+
+Graphiquement, on note 
+
+- que pour tous les modèles ARMA considérés, les valeurs observées en 2019 sont toutes dans les intervalles de confiance à 95%
+
+- que les prédictions des modèles considérés sont tellement proches qu'elles se superposent
+
+On départage les modèles sur leurs critères de sélection AIC, AICc et BIC ; 
+pour l'ensemble des critères, c'est le **processus AR(2)** qui est le plus apte à la prédiction.
+
+C'est ce modèle qu'on retiendra pour représenter la catégorie ARMA(p,q).
+
+
+## Entraînement sur la série d'étude entière  (Jan 2009 - Dec 2019)
+
+Afin de nous assurer de disposer du meilleur modèle ARMA sur la série d'étude entière (Jan 2009 - Dec 2019).
+
+- on va entraîner le modèle AR(2) sur la série d'étude entière (Janvier 2009 - Décembre 2019)
+
+- on va utiliser les fonctions *armaselect* et *auto-arima* pour nous indiquer si ce modèle est toujours bien le meilleur modèle sur l'entièreté de la série d'étude.
+
+### ARMA(2,0)=AR(2)
+
+On entraîne le modèle AR(2) sur la série d'étude
+
+```{r}
+
+# série d'étude stabilisée, 
+# diminuée de sa tendance et de sa saisonnalité
+job.ts.study.log.residus <- 
+  diff(diff(job.ts.study.log, lag=12, differences = 1), 
+       lag=1, differences = 1)
+```
+
+
+```{r}
+modele.arma.2_0.study <- Arima(job.ts.study.log.residus, order=c(2,0,0))
+```
+
+
+```{r, echo=FALSE}
+modele.arma.2_0.study
+```
+
+```{r}
+
+# Significativité des coefficients
+t_stat(modele.arma.2_0.study)
+
+```
+
+```{r}
+
+# corrélation des termes
+cor.arma(modele.arma.2_0.study)
+
+```
+
+```{r}
+
+# Test de blancheur des résidus
+Box.test(modele.arma.2_0.study$residuals, 
+         lag=length(modele.arma.2_0.study$residuals)/4, 
+         type="Box-Pierce")
+```
+
+Après ajustement du **modèle AR(2)**, 
+
+- **tous les coefficients** sont considérés comme **significatifs**,
+
+- **aucun problème de corrélation** n'est détecté,
+
+- les **résidus** après modélisation sont un **bruit blanc** ;
+
+  la **p-valeur du test de blancheur** est **> 5%**, et **on NE rejette PAS l'hypothèse** que les résidus après modélisation par un processus ARMA(2,0) soient un **bruit blanc**.
+
+
+```{r, echo=FALSE}
+# Visualisation
+plot(job.ts.study.log.residus,
+     main="Série d'entraînement : modélisation ARMA(2,0)",
+     col=col_ts)
+points(modele.arma.2_0.study$residuals, col=col_sarima, type="l")
+       
+```
+
+```{r, echo=FALSE}
+par(mfrow=c(1,2))
+
+acf(modele.arma.2_0.study$residuals,
+    main="ARMA(2,0) - ACF", lag.max=25)
+
+pacf(modele.arma.2_0.study$residuals,
+     main="ARMA(2,0) - PACF", lag.max=25)
+
+par(mfrow=c(1,1))
+```
+
+Les données estimées suivent bien la série temporelle.
+
+ACF et PACF des résidus après **modélisation AR(2)** présentent des caractéristiques satisfaisantes pour un processus stationnaire :
+
+- décroissance exponentielle, 
+
+- des valeurs respectant la bande de significativité de 95% 
+
+Le **rebond de corrélation à chaque saisonnalité** est présent.
+
+
+### auto-sélection du modèle : armaselect
+
+```{r}
+armaselect(job.ts.study.log.residus)
+```
+La majorité des modèles identifiés par **armaselect** n'est **pas exploitable** ; 
+sont proposés des modèles dont l'ordre de la composante moyenne mobile vaut 12 ou 13.
+
+Néanmoins armaselect confirme le choix du **modèle AR(2)** positionné en 6ème position du classement des meilleurs modèles selon le critère sbc.
+
+
+### auto-sélection du modèle : auto.arima
+
+On cherche à déterminer si la fonction *auto-arima* considère toujours AR(2) comme le meilleur modèle ; pour cette analyse, on prend le soin de préciser à la fonction de ne pas considérer la partie saisonnière résiduelle (*seasonal=FALSE* : on impose de chercher un processus ARMA, sans composante saisonnière).
+
+```{r}
+modele.arma.autoarima.study <- auto.arima(job.ts.study.log.residus, seasonal=FALSE)
+```
+
+
+```{r, echo=FALSE}
+modele.arma.autoarima.study
+```
+
+Auto-arima confirme qu'un **processus ARMA(2,0)** est bien le meilleur modèle selon le critère par défaut AICc.
+
+C'est ce modèle que l'on conserve pour poursuivre l'étude de l'année 2020.
+
+## Conclusion
+
+L'étude des modèles ARMA sur la série d'étude par une méthode entraînement/test a mise en évidence les points suivants :
+
+- **ARMA(2,0)=AR(2)** est la meilleure modélisation ARMA(p,q) de la série d'étude dans l'optique d'une prédiction
+
+- **Une saisonnalité résiduelle** dans la série diminuée de sa tendance et de sa saisonnalité n'est pas prise en compte par les modèles ARMA(p,q). 
+
+  Une modélisation plus complexe comme SARMA/SARIMA serait plus adéquate.
+
+
+\newpage
+
+# Modèles SARIMA
+
+On a vu pendant l'identification d'un modèle ARMA qu'une saisonnalité persistait dans les résidus du modèle. La sélection automatique du meilleur modèle selon la fonction **auto.arima** sur la série différenciée de sa tendance et de sa saisonnalité et stabilisée par un log, a fait apparaître une **composante saisonnière d'ordre 12**.
+
+Pour répondre à la modélisation complexe de la saisonnalité, on va utiliser un **modèle SARIMA** en étudiant cette fois-ci la **série temporelle avec tendance et saisonnalité, stabilisée par un log**.
+
+
+La démarche sera la suivante:
+
+- on identifie "manuellement" et automatiquement des candidats SARIMA ajustés sur la série d'entraînement (Jan 2008 - Dec 2018)
+
+- on identifie le meilleur prédicteur sur la série test (2019)
+
+- on entraîne le modèle sur la série entière en vue d'un travail sur l'année 2020 ;
+
+  on prendra soin dans cette dernière étape de vérifier que le modèle en question est toujours bien identifié comme le meilleur modèle.
+
+
+## Modélisation sur la série d'entraînement (Jan 2009 - Déc 2018)
+
+### Modèle SARIMA initial
+
+Pour rappel, lors de l'étude des modèles ARMA, **auto.arima** avait détecté dans la série d'entraînement stabilisée, diminuée de sa tendance et de sa saisonnalité, une **composante saisonnière d'ordre 12 de type ARMA(2,0)**.
+
+Sachant que par ailleurs la tendance se modélisait par un modèle AR(2), on va considérer le modèle **SARIMA(2,1,0)(2,1,0)[12]** comme **modèle initial**.
+
+```{r}
+modele.sarima.2_1_0.2_1_0 <- Arima(job.ts.train.log, order=c(2,1,0), seasonal = c(2,1,0))
+```
+
+
+```{r, echo=FALSE}
+modele.sarima.2_1_0.2_1_0
+```
+
+
+```{r}
+
+# Significativité des coefficients
+t_stat(modele.sarima.2_1_0.2_1_0)
+
+```
+
+```{r}
+
+# corrélation des termes
+cor.arma(modele.sarima.2_1_0.2_1_0)
+
+```
+
+```{r}
+
+# Test de blancheur des résidus
+Box.test(modele.sarima.2_1_0.2_1_0$residuals, 
+         lag=length(modele.sarima.2_1_0.2_1_0$residuals)/4, 
+         type="Box-Pierce")
+```
+
+Après ajustement du **modèle SARIMA(2,1,0)(2,1,0)[12]**, 
+
+- **tous les coefficients** sont considérés comme **significatifs**,
+
+- **aucun problème de corrélation** n'est détecté,
+
+- les **résidus** après modélisation sont un **bruit blanc** ;
+
+  la **p-valeur du test de blancheur** est **> 5%**, et **on NE rejette PAS l'hypothèse** que les résidus après modélisation par un processus SARIMA(2,1,0)(2,1,0)[12] soient un **bruit blanc**.
+
+
+```{r, echo=FALSE}
+# Visualisation
+plot(job.ts.train.log,
+     main="modélisation SARIMA(2,1,0)(2,1,0)[12]",
+     col=col_ts)
+points(modele.sarima.2_1_0.2_1_0$fitted, col=col_sarima, type="l")
+       
+```
+
+```{r, echo=FALSE}
+par(mfrow=c(1,2))
+
+acf(modele.sarima.2_1_0.2_1_0$residuals,
+    main="SARIMA(2,1,0)(2,1,0)[12] - ACF", lag.max=25)
+
+pacf(modele.sarima.2_1_0.2_1_0$residuals,
+     main="SARIMA(2,1,0)(2,1,0)[12] - PACF", lag.max=25)
+
+par(mfrow=c(1,1))
+```
+
+Les données estimées suivent bien la série temporelle.
+
+ACF et PACF des résidus après **modélisation SARIMA(2,1,0)(2,1,0)[12]** présentent des caractéristiques satisfaisantes pour un processus stationnaire :
+
+- décroissance exponentielle, 
+
+- des valeurs respectant la bande de significativité de 95% 
+
+On ne note **plus de rebond de corrélation aux saisonnalités**. On peut considérer que toute l'information portée par la série a été expliquée.
+
+De par ses **coefficients significatifs** et la **blancheur des résidus après modélisation**, le **modèle SARIMA(2,1,0)(2,1,0)[12]** est un **bon modèle SARIMA** issue d'une recherche "manuelle".
+
+Voyons si une sélection automatique du modèle SARIMA converge vers ce même modèle.
+
+### Auto-sélection du modèle SARIMA
+
+```{r}
+modele.sarima.auto <- auto.arima(job.ts.train.log)
+```
+
+```{r, echo=FALSE}
+modele.sarima.auto
+```
+
+La fonction *auto.arima* confirme le choix du **modèle SARIMA(2,1,0)(2,1,0)[12]**
+
+C'est donc ce modèle qu'on va choisir pour estimer l'année test 2019.
+
+## Prédiction de la série test 2019
+
+```{r}
+predictions.test.sarima_2_1_0.2_1_0 <- forecast(modele.sarima.2_1_0.2_1_0, h=12)
+```
+
+
+```{r, echo=FALSE}
+# tracé des valeurs observées sur la période de test (2019)
+
+plot(job.ts.test, 
+     ylim=range(job.ts.test,
+                exp(predictions.test.sarima_2_1_0.2_1_0$lower),
+                exp(predictions.test.sarima_2_1_0.2_1_0$upper)),
+     col=col_ts, lwd=2,
+     main="SARIMA(2,1,0)(2,1,0) - prédiction de l'année 2019",
+     pch=20, type="b",
+     cex.main=0.9)
+
+points(exp(predictions.test.sarima_2_1_0.2_1_0$mean), col=col_sarima, lwd=1, type="l")
+points(exp(predictions.test.sarima_2_1_0.2_1_0$lower[,2]), col=col_sarima, lwd=1, type="l", lty=2)
+points(exp(predictions.test.sarima_2_1_0.2_1_0$upper[,2]), col=col_sarima, lwd=1, type="l", lty=2)
+
+legend("bottomleft", 
+       legend=c("observé","prédictions","IC 95%"), 
+       col=c("black", col_sarima, col_sarima),
+       lty=c(1, 1, 2),
+       cex=0.7)
+
+```
+
+
+Graphiquement, on note 
+
+- que les valeurs observées en 2019 sont toutes dans l'intervalle de confiance à 95% du modèle
+
+- que les valeurs prédites suivent  bien la tendance réellement observée, notamment en tout début et en fin d'année.
+
+
+On retient ce modèle pour la suite de l'étude.
+
+
+## Entraînement sur la série d'étude entière (Jan 2009 - Dec 2019)
+
+
+Afin de nous assurer de disposer du meilleur modèle SARIMA sur la série d'étude entière
+
+- on va entraîner le **modèle SARIMA(2,1,0)(2,1,0)[12]** sur la série d'étude entière (Janvier 2009 - Décembre 2019)
+
+- on va utiliser la fonction *auto-arima* pour préciser si ce modèle est toujours bien le meilleur modèle sur l'entièreté de la série d'étude.
+
+- Si ce n'est pas le cas, on affinera le modèle et on gardera le meilleur modèle au sens des critères de sélection AICc ou BIC
+
+
+### SARIMA(2,1,0)(2,1,0)[12]
+
+On entraîne le modèle SARIMA(2,1,0)(2,1,0)[12] sur la série d'étude stabilisée (avec tendance et saisonnalité).
+
+
+```{r}
+modele.sarima.2_1_0.2_1_0.study <- Arima(job.ts.study.log, order=c(2,1,0), seasonal=c(2,1,0))
+```
+
+
+```{r, echo=FALSE}
+modele.sarima.2_1_0.2_1_0.study
+```
+
+```{r}
+
+# Significativité des coefficients
+t_stat(modele.sarima.2_1_0.2_1_0.study)
+
+```
+
+```{r}
+
+# corrélation des termes
+cor.arma(modele.sarima.2_1_0.2_1_0.study)
+
+```
+
+```{r}
+
+# Test de blancheur des résidus
+Box.test(modele.sarima.2_1_0.2_1_0.study$residuals, 
+         lag=length(modele.arma.2_0.study$residuals)/4, 
+         type="Box-Pierce")
+```
+
+Après ajustement du **modèle SARIMA(2,1,0)(2,1,0)[12]**, 
+
+- **tous les coefficients** sont considérés comme **significatifs**,
+
+- **aucun problème de corrélation** n'est détecté,
+
+- les **résidus** après modélisation sont un **bruit blanc** ;
+
+  la **p-valeur du test de blancheur** est **> 5%**, et **on NE rejette PAS l'hypothèse** que les résidus après modélisation par un processus SARIMA(2,1,0)(2,1,0)[12] soient un **bruit blanc**.
+
+```{r, echo=FALSE}
+# Visualisation
+plot(job.ts.train.log,
+     main="modélisation SARIMA(2,1,0)(2,1,0)[12]",
+     col=col_ts)
+points(modele.sarima.2_1_0.2_1_0$fitted, col=col_sarima, type="l")
+       
+```
+
+```{r, echo=FALSE}
+par(mfrow=c(1,2))
+
+acf(modele.sarima.2_1_0.2_1_0.study$residuals,
+    main="SARIMA(2,1,0)(2,1,0)[12] - ACF", lag.max=25)
+
+pacf(modele.sarima.2_1_0.2_1_0.study$residuals,
+     main="SARIMA(2,1,0)(2,1,0)[12] - PACF", lag.max=25)
+
+par(mfrow=c(1,1))
+```
+
+Par ailleurs, les données suivent plutôt bien la série temporelle.
+
+ACF et PACF des résidus après modélisation SARIMA(2,1,0)(2,1,0)[12] présentent des caractéristiques satisfaisantes (décroissance exponentielle, des valeurs respectant la bande de significativité de 95%). 
+
+### auto-sélection du modèle : auto.arima
+
+On cherche à déterminer si la fonction *auto-arima* considère toujours **SARIMA(2,1,0)(2,1,0)[12]** comme le meilleur modèle sur la série d'étude entière.
+
+```{r}
+modele.sarima.autoarima.study <- auto.arima(job.ts.study.log)
+```
+
+
+```{r, echo=FALSE}
+modele.sarima.autoarima.study
+```
+
+```{r}
+
+# Significativité des coefficients
+t_stat(modele.sarima.autoarima.study)
+
+```
+
+```{r}
+
+# corrélation des termes
+cor.arma(modele.sarima.autoarima.study)
+
+```
+
+```{r}
+
+# Test de blancheur des résidus
+Box.test(modele.sarima.autoarima.study$residuals, 
+         lag=length(modele.sarima.autoarima.study$residuals)/4, 
+         type="Box-Pierce")
+```
+
+Auto-arima propose un **modèle alternatif** **SARIMA(0,1,2)(0,1,2)** qu'il considère le meilleur modèle selon le critère par défaut AICc.
+
+Après ajustement du **modèle SARIMA(0,1,2)(0,1,2)[12]** sur la série d'étude entière, incluant sa tendance et de sa saisonnalité, et stabilisée par un log :
+
+- **tous les coefficients** sont considérés comme **significatifs**,
+
+- **aucun problème de corrélation** n'est détecté,
+
+- les **résidus** après modélisation NE sont PAS un **bruit blanc** ;
+
+  la **p-valeur du test de blancheur** est **< 5%**, et **on rejette l'hypothèse** que les résidus après modélisation par un processus SARIMA(0,1,2)(0,1,2) soient un **bruit blanc**.
+
+```{r, echo=FALSE}
+# Visualisation
+plot(job.ts.train.log,
+     main="modélisation SARIMA(2,1,0)(2,1,0)[12]",
+     col=col_ts)
+points(modele.sarima.autoarima.study$fitted, col=col_sarima, type="l")
+       
+```
+
+```{r, echo=FALSE}
+par(mfrow=c(1,2))
+
+acf(modele.sarima.autoarima.study$residuals,
+    main="SARIMA(0,1,2)(0,1,2)[12] - ACF", lag.max=25)
+
+pacf(modele.sarima.autoarima.study$residuals,
+     main="SARIMA(0,1,2)(0,1,2)[12] - PACF", lag.max=25)
+
+par(mfrow=c(1,1))
+```
+
+La fonction d'auto-corrélation des résidus après modélisation SARIMA(0,1,2)(0,1,2)[12] présente les caractéristiques suivantes
+
+- les décroissances exponentielles sur ACF et PACF sont satisfaisantes 
+
+- néanmoins, les auto-corrélations ne sont visiblement pas nulles (ce qui est confirmé par le test de blancheur)
+
+- la PACF présente des valeurs significativement **non nulles aux décalages 3, 4 et 14** ; laissant supposer qu'une **composante auto-régressive** améliorerait la compréhension de la série.
+
+
+Pour **affiner le modèle proposé par auto.arima**, on introduit une **composante AR(3)** pour prendre en considération les accidents de la PACF.
+
+
+### SARIMA(3,1,2)(0,1,2)[12]
+
+On entraîne le modèle SARIMA(3,1,2)(0,1,2)[12] sur la série d'étude stabilisée (avec tendance et saisonnalité)
+
+
+```{r}
+modele.sarima.3_1_2.0_1_2.study <- Arima(job.ts.study.log, order=c(3,1,2), seasonal=c(0,1,2))
+```
+
+
+```{r, echo=FALSE}
+modele.sarima.3_1_2.0_1_2.study
+```
+
+```{r}
+
+# Significativité des coefficients
+t_stat(modele.sarima.3_1_2.0_1_2.study)
+
+```
+
+```{r}
+
+# corrélation des termes
+cor.arma(modele.sarima.3_1_2.0_1_2.study)
+
+```
+
+```{r}
+
+# Test de blancheur des résidus
+Box.test(modele.sarima.3_1_2.0_1_2.study$residuals, 
+         lag=length(modele.sarima.3_1_2.0_1_2.study$residuals)/4, 
+         type="Box-Pierce")
+```
+
+Après ajustement du **modèle SARIMA(3,1,2)(0,1,2)[12]** sur la série d'étude entière stabilisée par un log :
+
+- parmi les 7 paramètres du modèle, le **paramètre SMA2** est considéré comme **non significatif**,
+
+- des **problèmes de corrélation** sont détectés (des valeurs > 0.9),
+
+- les **résidus** après modélisation sont maintenant un **bruit blanc** ;
+
+  la **p-valeur du test de blancheur** est **> 5%**, et **on NE rejette PAS l'hypothèse** que les résidus après modélisation par un processus SARIMA(3,1,2)(0,1,2)[12] soient un **bruit blanc**.
+
+```{r, echo=FALSE}
+# Visualisation
+plot(job.ts.train.log,
+     main="modélisation SARIMA(2,1,0)(2,1,0)[12]",
+     col=col_ts)
+points(modele.sarima.3_1_2.0_1_2.study$fitted, col=col_sarima, type="l")
+       
+```
+
+```{r, echo=FALSE}
+par(mfrow=c(1,2))
+
+acf(modele.sarima.3_1_2.0_1_2.study$residuals,
+    main="SARIMA(3,1,2)(0,1,2)[12] - ACF", lag.max=25)
+
+pacf(modele.sarima.3_1_2.0_1_2.study$residuals,
+     main="SARIMA(3,1,2)(0,1,2)[12] - PACF", lag.max=25)
+
+par(mfrow=c(1,1))
+```
+
+Avec l'ajout de la composante auto-régressive, ACF et PACF sont maintenant satisfaisantes.
+
+Les valeurs ajustées suivent bien la série temporelle.
+
+ACF et PACF des résidus après **SARIMA(3,1,2)(0,1,2)[12]** présentent des caractéristiques satisfaisantes pour un processus stationnaire :
+
+- décroissance exponentielle, 
+
+- des valeurs respectant la bande de significativité de 95% 
+
+Pour la suite, on prend cependant le partie de **supprimer le paramètre SMA2** considéré comme non significatif dans le modèle.
+
+### SARIMA(3,1,2)(0,1,1)[12]
+
+On entraîne le modèle SARIMA(3,1,2)(0,1,1)[12] sur la série d'étude stabilisée (avec tendance et saisonnalité)
+
+```{r}
+modele.sarima.3_1_2.0_1_1.study <- Arima(job.ts.study.log, order=c(3,1,2), seasonal=c(0,1,1))
+```
+
+
+```{r, echo=FALSE}
+modele.sarima.3_1_2.0_1_1.study
+```
+
+```{r}
+
+# Significativité des coefficients
+t_stat(modele.sarima.3_1_2.0_1_1.study)
+
+```
+
+```{r}
+
+# correlation des termes
+cor.arma(modele.sarima.3_1_2.0_1_1.study)
+
+```
+
+```{r}
+
+# Test de blancheur des résidus
+Box.test(modele.sarima.3_1_2.0_1_1.study$residuals, 
+         lag=length(modele.sarima.3_1_2.0_1_1.study$residuals)/4, 
+         type="Box-Pierce")
+```
+
+
+Après ajustement du **modèle SARIMA(3,1,2)(0,1,1)[12]**, 
+
+- **tous les coefficients** sont considérés comme **significatifs** (y compris SMA1 dont la p-valeur frôle les 5%),
+
+- **des problèmes de corrélation** sont détectés entre les termes AR (valeurs > 0.9),
+
+- les **résidus** après modélisation sont un **bruit blanc** ;
+
+  la **p-valeur du test de blancheur** est **> 5%**, et **on NE rejette PAS l'hypothèse** que les résidus après modélisation par un processus SARIMA(3,1,2)(0,1,1)[12] soient un **bruit blanc**.
+
+```{r, echo=FALSE}
+# Visualisation
+plot(job.ts.train.log,
+     main="modélisation SARIMA(2,1,0)(2,1,0)[12]",
+     col=col_ts)
+points(modele.sarima.3_1_2.0_1_1.study$fitted, col=col_sarima, type="l")
+       
+```
+
+```{r, echo=FALSE}
+par(mfrow=c(1,2))
+
+acf(modele.sarima.3_1_2.0_1_1.study$residuals,
+    main="SARIMA(3,1,2)(0,1,1)[12] - ACF", lag.max=25)
+
+pacf(modele.sarima.3_1_2.0_1_1.study$residuals,
+     main="SARIMA(3,1,2)(0,1,1)[12] - PACF", lag.max=25)
+
+par(mfrow=c(1,1))
+```
+
+
+Les valeurs ajustées suivent bien la série temporelle.
+
+ACF et PACF des résidus après **SARIMA(3,1,2)(0,1,1)[12]** présentent des caractéristiques satisfaisantes pour un processus stationnaire :
+
+- décroissance exponentielle, 
+
+- des valeurs respectant la bande de significativité de 95% 
+
+
+Bien que des problèmes de corrélations soient constatés entre les termes AR, on décide de les maintenir puisque les termes AR ont été spécifiquement introduits pour lever des problèmes liés à la significativité des termes de la PACF.
+
+On conserve donc le modèle SARIMA(3,1,2)(0,1,1)[12].
+
+### Choix du modèle
+
+Les modèles SARIMA candidats pour expliquer la série d'étude entière sont les suivants
+
+- SARIMA(2,1,0)(2,1,0)[12] issu de l'identification du modèle sur les séries d'entraînement / test
+
+- SARIMA(0,1,2)(0,1,2)[12] issu de la sélection du meilleur modèle par auto.arima selon le critère AICc (les résidus ne sont pas un bruit blanc)
+
+- SARIMA(3,1,2)(0,1,2)[12] issu de l'amélioration du modèle auto.arima pour effacer les valeurs non significativement nulles de la PACF.
+
+- SARIMA(3,1,2)(0,1,1)[12] issu de l'optimisation du modèle précédent.
+
+
+```{r, echo=FALSE}
+choix_sarima <- cbind(
+              c(modele.sarima.2_1_0.2_1_0.study$aic, modele.sarima.2_1_0.2_1_0.study$aicc, modele.sarima.2_1_0.2_1_0.study$bic),
+              c(modele.sarima.autoarima.study$aic, modele.sarima.autoarima.study$aicc, modele.sarima.autoarima.study$bic),
+              c(modele.sarima.3_1_2.0_1_2.study$aic, modele.sarima.3_1_2.0_1_2.study$aicc, modele.sarima.3_1_2.0_1_2.study$bic),
+              c(modele.sarima.3_1_2.0_1_1.study$aic, modele.sarima.3_1_2.0_1_1.study$aicc, modele.sarima.3_1_2.0_1_1.study$bic))
+
+choix_sarima <- round(choix_sarima,2)
+
+choix_sarima <- rbind ( c("SARIMA(2,1,1)(2,1,1)[12]","SARIMA(0,1,2)(0,1,2)[12]","SARIMA(3,1,2)(0,1,2)[12]","SARIMA(3,1,2)(0,1,1)[12]"),
+                      choix_sarima)
+
+choix_sarima <- cbind ( c("","AIC","AICc","BIC"), choix_sarima )
+
+
+
+```
+
+```{r, echo=FALSE}
+t(choix_sarima) %>% 
+  kable("latex", booktabs = T, caption = "Résumé des modèles SARIMA sur la série d'étude") %>%
+  kable_styling(latex_options = c("striped", "HOLD_position"))
+```
+
+```{r, include=FALSE}
+t(choix_sarima) %>% 
+  kable(booktabs = T, caption = "Résumé des modèles SARIMA sur la série d'étude")
+```
+
+
+On note que pour l'ensemble des critères, le **modèle SARIMA(3,1,2)(0,1,1)[12]** est le plus apte à la prédiction. 
+
+C'est ce modèle qu'on retiendra pour représenter la catégorie SARIMA.
+
+
+
+\newpage
+
+# Résumé des modèles candidats et comparaison
+
+3 types de modélisation ont été entrepris pour expliquer la série temporelle d'étude de Jan 2008 à Décembre 2019.
+
+Pour chacun, le meilleur modèle pour la prédiction a été identifié, à savoir
+
+- Pour le lissage exponentiel :  **(M, Ad, A)**
+
+- Pour la catégorie ARMA(p,q) : **AR(2,0)**
+
+- Pour la catégorie SARIMA : 
+  
+  - **SARIMA(2,1,0)(2,1,0)[12]** lorsqu'il s'agit de prédire la série test 2019 depuis un modèle entraîné sur la série temporelle Jan 2009 - Déc 2018 
+
+  - **SARIMA(3,1,2)(0,1,1)[12]** lorsqu'il s'agit de considérer la série d'étude entière
+
+
+## Comparaison des modèles sur la série temporelle de test (2019)
+
+
+Comparons aux valeurs réellement observées en 2019 les prédictions des modèles : 
+
+- Lissage exponentiel **(M, Ad, A)**
+
+- **AR(2,0)** (les valeurs prédites se sont vues ajouter tendance et saisonnalité)
+
+- **SARIMA(2,1,0)(2,1,0)[12]** (les valeurs "log" prédites ont été transformées par une "exponentielle")
+
+
+```{r, echo=FALSE, fig.align='center', fig.width=8, fig.height=6}
+
+par(mfrow=c(2,2))
+
+# M,Ad,A
+
+plot(job.ts.test, 
+     main="prédictions M,Ad,A de l'année test (2019)",
+     ylim=range(job.ts.test, predictions.le.MAdA.test$lower,predictions.le.ZZZ.test$upper),
+     col=col_ts, lwd=2,
+     pch=20, type="b",
+     cex.main=0.8)
+
+points(predictions.le.MAdA.test$mean, col=col_le, lwd=1, type="l")
+points(predictions.le.MAdA.test$lower[,2], col=col_le, lwd=1, type="l", lty=2)
+points(predictions.le.MAdA.test$upper[,2], col=col_le, lwd=1, type="l", lty=2)
+
+# AR(2)
+plot(job.ts.test, 
+     main="prédictions AR(2) de l'année test (2019)",
+     ylim=range(job.ts.test, predictions.le.MAdA.test$lower,predictions.le.ZZZ.test$upper),
+     col=col_ts, lwd=2,
+     pch=20, type="b",     
+     cex.main=0.8)
+
+points(exp(job.ts.test.log.tendance_saison + predictions.test.arma.2_0$mean), 
+       col=col_arma, lwd=1, type="l")
+points(exp(job.ts.test.log.tendance_saison + predictions.test.arma.2_0$lower[,2]), 
+       col=col_arma, lwd=1, type="l", lty=2)
+points(exp(job.ts.test.log.tendance_saison + predictions.test.arma.2_0$upper[,2]), 
+       col=col_arma, lwd=1, type="l", lty=2)
+
+# SARIMA(2,1,0)(2,1,0)
+
+plot(job.ts.test, 
+     main="prédictions SARIMA(2,1,0)(2,1,0) de l'année test (2019)",
+     ylim=range(job.ts.test, predictions.le.MAdA.test$lower,predictions.le.ZZZ.test$upper),
+     col=col_ts, lwd=2,
+     pch=20, type="b",     
+     cex.main=0.8)
+
+points(exp(predictions.test.sarima_2_1_0.2_1_0$mean), col=col_sarima, lwd=1, type="l")
+points(exp(predictions.test.sarima_2_1_0.2_1_0$lower[,2]), col=col_sarima, lwd=1, type="l", lty=2)
+points(exp(predictions.test.sarima_2_1_0.2_1_0$upper[,2]), col=col_sarima, lwd=1, type="l", lty=2)
+
+legend(2019.2,175000,
+       legend=c("moyenne", "IC à 95%"),
+       col=col_ts, cex=0.5, lty=c(1,2))
+
+par(mfrow=c(1,1))
+
+```
+
+```{r, echo=FALSE, fig.align='center'}
+plot(job.ts.test, 
+     main="Comparaison des prédictions de l'année test (2019)",
+     ylim=range(job.ts.test, predictions.le.MAdA.test$lower,predictions.le.ZZZ.test$upper),
+     col=col_ts, lwd=2,
+     pch=20, type="b",     
+     cex.main=0.8)
+
+# M,Ad,A
+points(predictions.le.MAdA.test$mean, col=col_le, lwd=1, type="l")
+points(predictions.le.MAdA.test$lower[,2], col=col_le, lwd=1, type="l", lty=2)
+points(predictions.le.MAdA.test$upper[,2], col=col_le, lwd=1, type="l", lty=2)
+
+# AR(2)
+points(exp(job.ts.test.log.tendance_saison + predictions.test.arma.2_0$mean), 
+       col=col_arma, lwd=1, type="l")
+points(exp(job.ts.test.log.tendance_saison + predictions.test.arma.2_0$lower[,2]), 
+       col=col_arma, lwd=1, type="l", lty=2)
+points(exp(job.ts.test.log.tendance_saison + predictions.test.arma.2_0$upper[,2]), 
+       col=col_arma, lwd=1, type="l", lty=2)
+
+# SARIMA(2,1,0)(2,1,0)
+points(exp(predictions.test.sarima_2_1_0.2_1_0$mean), col=col_sarima, lwd=1, type="l")
+points(exp(predictions.test.sarima_2_1_0.2_1_0$lower[,2]), col=col_sarima, lwd=1, type="l", lty=2)
+points(exp(predictions.test.sarima_2_1_0.2_1_0$upper[,2]), col=col_sarima, lwd=1, type="l", lty=2)
+
+legend("bottomleft",
+       legend=c("observé", "M,Ad,A", "AR(2)", "SARIMA(2,1,0)(2,1,0)"),
+       col=c(col_ts, col_le, col_arma, col_sarima),
+       cex=0.5,
+       pch=15)
+
+legend(2019.2,175000,
+       legend=c("moyenne", "IC à 95%"),
+       col=col_ts, cex=0.5, lty=c(1,2))
+
+
+```
+
+
+Quelques constats :
+
+- les valeurs observées entrent dans les intervalles de confiance à 95% des 3 modèles (hormis peut-être un défaut sur le modèle AR(2))
+
+- les intervalles de confiance à 95% sont de largeur similaire pour les 3 modèles
+
+- les 3 modèles proposent des prédictions d'Avril à Juillet plutôt éloignées des valeurs observées
+
+- le lissage exponentiel propose des prédictions proches des valeurs observées d'Août à Décembre, mais est peu précis sur le début d'année de Janvier à Mars
+
+- inversement, le modèle AR(2) propose des prédictions de Janvier à Mars proches des valeurs observées mais est moins juste d'août à décembre
+
+- le modèle SARIMA(2,1,0)(2,1,0)[12] propose des valeurs justes à la fois de Janvier à Mars et d'août à décembre, faisant ainsi mieux que ses 2 concurrents, tout en proposant un intervalle de confiance à 95% aussi resserré que les autres modèles
+
+Au final, **le modèle SARIMA(2,1,0)(2,1,0)[12] est le plus efficace pour prédire l'année de test 2019**.
+
+
+\newpage
+
+## Années COVID - prédiction et comparaison des modèles
+
+### Prédiction de l'année 2020
+
+On note que pour l'étude comparative sur l'année 2020, on retire le modèle AR(2) qui prédit les résidus d'une série dépourvue de tendance et saisonnalité ; la tendance et la saisonnalité n'étant pas non modélisées dans le cas d'un ARMA(p,q), elles ne sont pas prédictibles.
+
+Il reste 2 modèles pertinents pour la prédiction, construits à partir de la série d'étude de Janvier 2009 à Décembre 2019.
+
+A savoir
+
+- Lissage exponentiel **(M, Ad, A)**
+
+- **SARIMA(3,1,2)(0,1,1)[12]** (le plus pertinent sur la série entière)
+
+
+```{r}
+horizon=12
+```
+
+```{r}
+predictions.2020.le.MAdA <- forecast(modele.le.MAdA.study, h=horizon)
+predictions.2020.sarima.3_1_2.0_1_1 <- forecast(modele.sarima.3_1_2.0_1_2.study, 
+                                                h=horizon)
+```
+
+```{r, echo=FALSE}
+job.ts.covid <- job.ts.2020
+```
+
+
+```{r, echo=FALSE, fig.align='center'}
+
+par(mfrow=c(1,2))
+
+# M,Ad,A
+
+plot(job.ts.2020, 
+     main="prédictions M,Ad,A de l'année 2020",
+     ylim=range(job.ts.2020,
+                predictions.2020.le.MAdA$lower,
+                predictions.2020.le.MAdA$upper),
+     col=col_ts, lwd=2,
+     cex.main=0.8)
+
+points(predictions.2020.le.MAdA$mean, 
+       col=col_le, lwd=1, type="l")
+points(predictions.2020.le.MAdA$lower[,2], 
+       col=col_le, lwd=1, type="l", lty=2)
+points(predictions.2020.le.MAdA$upper[,2], 
+       col=col_le, lwd=1, type="l", lty=2)
+
+# SARIMA(3,1,2)(0,1,1)
+
+plot(job.ts.2020, 
+     main="prédictions SARIMA(3,1,2)(0,1,1) de l'année 2020",
+     ylim=range(job.ts.2020,
+                exp(predictions.2020.sarima.3_1_2.0_1_1$lower),
+                exp(predictions.2020.sarima.3_1_2.0_1_1$upper)),
+     col=col_ts, lwd=2,
+     cex.main=0.8)
+
+points(exp(predictions.2020.sarima.3_1_2.0_1_1$mean), 
+       col=col_sarima, lwd=1, type="l")
+points(exp(predictions.2020.sarima.3_1_2.0_1_1$lower[,2]), 
+       col=col_sarima, lwd=1, type="l", lty=2)
+points(exp(predictions.2020.sarima.3_1_2.0_1_1$upper[,2]), 
+       col=col_sarima, lwd=1, type="l", lty=2)
+
+legend(2019.2,175000,
+       legend=c("moyenne", "IC à 95%"),
+       col=col_ts, cex=0.5, lty=c(1,2))
+
+par(mfrow=c(1,1))
+
+```
+
+```{r, echo=FALSE}
+plot(job.ts.2020, 
+     main="Comparaison des prédictions sur l'année 2020",
+     ylim=range(job.ts.2020, 
+                predictions.2020.le.MAdA$lower,
+                predictions.2020.le.MAdA$upper,
+                predictions.2020.sarima.3_1_2.0_1_1$lower,
+                predictions.2020.sarima.3_1_2.0_1_1$upper),
+     col=col_ts, lwd=2,
+     pch=20, type="b",
+     cex.main=0.8)
+
+# M,Ad,A
+points(predictions.2020.le.MAdA$mean, 
+       col=col_le, lwd=1, type="l")
+points(predictions.2020.le.MAdA$lower[,2], 
+       col=col_le, lwd=1, type="l", lty=2)
+points(predictions.2020.le.MAdA$upper[,2], 
+       col=col_le, lwd=1, type="l", lty=2)
+
+# SARIMA(3,1,2)(0,1,1)
+points(exp(predictions.2020.sarima.3_1_2.0_1_1$mean), 
+       col=col_sarima, lwd=1, type="l")
+points(exp(predictions.2020.sarima.3_1_2.0_1_1$lower[,2]), 
+       col=col_sarima, lwd=1, type="l", lty=2)
+points(exp(predictions.2020.sarima.3_1_2.0_1_1$upper[,2]), 
+       col=col_sarima, lwd=1, type="l", lty=2)
+
+legend("bottomleft",
+       legend=c("observé", "M,Ad,A", "SARIMA(3,1,2)(0,1,1)"),
+       col=c(col_ts, col_le, col_sarima),
+       cex=0.5,
+       pch=15)
+
+legend(2019.2,175000,
+       legend=c("moyenne", "IC à 95%"),
+       col=col_ts, cex=0.5, lty=c(1,2))
+
+
+```
+
+
+Comme on peut s'y attendre, les prédictions de Janvier et Février 2020 sont correctes.
+
+Le confinement ayant été décidé en Mars 2020, 
+
+- le nombre de postes vacants chute fortement en Mars et Avril (et se reprend au mois de mai),
+
+- les modèles "sur-estiment" les valeurs et les prédictions sont sans surprise bien au-dessus des valeurs observées en 2020.
+
+  Après le mois de février 2020, les valeurs observées sont en dehors des bandes de prévision à 95%.
+
+Afin de quantifier à quel point la "cassure" éloigne les observations des prédictions, et donc à quel point les modèles sont devenus obsolètes, on va s'intéresser aux probabilités des observations de 2020 connaissant les modèles prédictifs.
+
+Soit $y_t$ l'observation à un mois donné ; la loi de probabilité d'observation est pour ce mois est $N(\mu, \sigma^2)$ 
+
+où 
+
+- $\mu$ est la valeur moyenne prédite par le modèle (sortie de la fonction *forecast*)
+
+- $\sigma^2$ est la variance de la prédiction du modèle 
+
+La variance $\sigma^2$ n'est pas fournie en l'état par la sortie de la fonction *forecast* ; néanmoins on peut l'obtenir à partir de la borne supérieure de l'intervalle de prédiction à 80% qui s'écrit dans l'hypothèse de normalité $BorneSup_{80} = \mu+quantile(0.9)\sigma$.
+
+Ainsi, pour un mois donné, 
+
+- l'écart-type $\sigma$ de la prédiction vaut $\frac{BorneSup_{80} - \mu}{q(0.9)}$
+
+- et la probabilité d'observer la valeur réelle ou pire sachant la loi $N(\mu, \sigma^2)$ est l'ordre-quantile $F(\frac{y_t-\mu}{\sigma}))$ où $F$ est la fonction de répartition de la loi normale $N(0,1)$.
+
+Ainsi, on peut calculer la probabilité d'occurrence des observations de 2020 sous nos 2 modèles de prédiction:
+
+**probabilités des observations pour le modèle (M,Ad,A) (en pourcentage %)**
+
+```{r}
+# ordres quantiles des observations pour le modèle (M,Ad,A)
+
+sigma.2020.MAdA <- 
+    (predictions.2020.le.MAdA$upper[,1] - predictions.2020.le.MAdA$mean) / qnorm(0.9)
+
+ordres.2020.MAdA <- 
+    pnorm((job.ts.2020-predictions.2020.le.MAdA$mean)/sigma.2020.MAdA)
+```
+
+```{r, echo=FALSE}
+round(100*ordres.2020.MAdA, digits=2)
+```
+En prenant en considération le modèle de lissage exponentiel (M,Ad,A), les probabilités d'observer les valeurs de Mars à Décembre 2020 sont faibles (< 12.73%) voire nulles (de Mars à Août).
+
+
+**probabilités des observations pour le modèle SARIMA(3,1,2)(0,1,1) (en pourcentage %)**
+
+```{r}
+# ordres quantiles des observations pour le modèle SARIMA(3,1,2)(0,1,1)
+
+sigma.2020.sarima.3_1_2.0_1_1 <- 
+  (exp(predictions.2020.sarima.3_1_2.0_1_1$upper[,1]) 
+   - exp(predictions.2020.sarima.3_1_2.0_1_1$mean)) / qnorm(0.9)
+
+ordres.2020.sarima.3_1_2.0_1_1 <-
+  pnorm((job.ts.2020-exp(predictions.2020.sarima.3_1_2.0_1_1$mean))
+        /sigma.2020.sarima.3_1_2.0_1_1)
+
+```
+
+```{r, echo=FALSE}
+round(100*ordres.2020.sarima.3_1_2.0_1_1, digits=2)
+```
+De la même façon, en prenant en référence le modèle SARIMA(3,1,2)(0,1,1)[12], les probabilités d'observer les valeurs de 2020 sont faibles (< 6%).
+
+La série observée est très inférieure aux prédictions des modèles de référence ; les modèles ajustés avant 2020 ne sont plus valables dès Mars 2020 et on conclut qu'il s'agirait de procéder à une nouvelle modélisation après la "cassure".
+
+
+### et au-delà... Prédictions à horizon 36 mois
+
+Voyons comment se comportent les modèles prédictifs au-delà de l'année 2020.
+
+```{r}
+horizon=36
+```
+
+```{r}
+predictions.postcovid.le.MAdA <- 
+  forecast(modele.le.MAdA.study, h=horizon)
+
+predictions.postcovid.sarima.3_1_2.0_1_1.2020 <- 
+  forecast(modele.sarima.3_1_2.0_1_2.study, h=horizon)
+```
+
+```{r, echo=FALSE}
+job.ts.postcovid <- window(job.ts.all, start=c(2020,1))
+```
+
+
+```{r, echo=FALSE, fig.align='center'}
+
+par(mfrow=c(1,2))
+
+# M,Ad,A
+
+plot(job.ts.postcovid, 
+     main="prédictions M,Ad,A de l'année 2020",
+     ylim=range(job.ts.postcovid,
+                predictions.postcovid.le.MAdA$lower,
+                predictions.postcovid.le.MAdA$upper),
+     col=col_ts, lwd=2,
+     cex.main=0.8)
+
+points(predictions.postcovid.le.MAdA$mean, 
+       col=col_le, lwd=1, type="l")
+points(predictions.postcovid.le.MAdA$lower[,2], 
+       col=col_le, lwd=1, type="l", lty=2)
+points(predictions.postcovid.le.MAdA$upper[,2], 
+       col=col_le, lwd=1, type="l", lty=2)
+
+
+# SARIMA(3,1,2)(0,1,1)
+
+plot(job.ts.postcovid, 
+     main="prédictions SARIMA(3,1,2)(0,1,1) de l'année 2020",
+     ylim=range(job.ts.postcovid,
+                exp(predictions.postcovid.sarima.3_1_2.0_1_1.2020$lower),
+                exp(predictions.postcovid.sarima.3_1_2.0_1_1.2020$upper)),
+     col=col_ts, lwd=2,
+     cex.main=0.8)
+
+points(exp(predictions.postcovid.sarima.3_1_2.0_1_1.2020$mean), 
+       col=col_sarima, lwd=1, type="l")
+points(exp(predictions.postcovid.sarima.3_1_2.0_1_1.2020$lower[,2]), 
+       col=col_sarima, lwd=1, type="l", lty=2)
+points(exp(predictions.postcovid.sarima.3_1_2.0_1_1.2020$upper[,2]), 
+       col=col_sarima, lwd=1, type="l", lty=2)
+
+legend(2019.2,175000,
+       legend=c("moyenne", "IC à 95%"),
+       col=col_ts, cex=0.5, lty=c(1,2))
+
+par(mfrow=c(1,1))
+
+```
+
+```{r, echo=FALSE, fig.align='center'}
+plot(job.ts.postcovid, 
+     main="Prédictions du nombre de postes vacants après l'année 2020",
+     ylim=range(job.ts.covid, 
+                predictions.postcovid.le.MAdA$lower,
+                predictions.postcovid.le.MAdA$upper,
+                predictions.postcovid.sarima.3_1_2.0_1_1.2020$lower,
+                predictions.postcovid.sarima.3_1_2.0_1_1.2020$upper),
+     col=col_ts, lwd=2,
+     pch=20, type="b",
+     cex.main=0.8)
+
+# M,Ad,A
+points(predictions.postcovid.le.MAdA$mean, 
+       col=col_le, lwd=1, type="l")
+points(predictions.postcovid.le.MAdA$lower[,2], 
+       col=col_le, lwd=1, type="l", lty=2)
+points(predictions.postcovid.le.MAdA$upper[,2], 
+       col=col_le, lwd=1, type="l", lty=2)
+
+# SARIMA(3,1,2)(0,1,1)
+points(exp(predictions.postcovid.sarima.3_1_2.0_1_1.2020$mean), 
+       col=col_sarima, lwd=1, type="l")
+points(exp(predictions.postcovid.sarima.3_1_2.0_1_1.2020$lower[,2]), 
+       col=col_sarima, lwd=1, type="l", lty=2)
+points(exp(predictions.postcovid.sarima.3_1_2.0_1_1.2020$upper[,2]), 
+       col=col_sarima, lwd=1, type="l", lty=2)
+
+legend("bottomright",
+       legend=c("observé", "prédictions M,Ad,A", "prédictions SARIMA(3,1,2)(0,1,1)"),
+       col=c(col_ts, col_le, col_sarima),
+       cex=0.5,
+       pch=15)
+
+legend(2019.2,175000,
+       legend=c("moyenne", "IC à 95%"),
+       col=col_ts, cex=0.5, lty=c(1,2))
+
+abline(v=2020.09) # Février 2020
+abline(v=2021.09) # Février 2021
+
+```
+
+Quelques constats:
+
+- L'accident COVID aura duré un an au vu du nombre de postes vacants ; ainsi on retrouve à partir de Mars 2021 un nombre de postes proches des prédictions,
+
+- Sur cette période post-covid, les intervalles de confiance à 95% sont certes plus larges, mais ils sont adaptés pour contenir les valeurs réellement observées.
+
+- Ainsi les modèles entraînés sur les années 2008-2019 prédisent relativement bien les années 2021-2023 
+
+- Le modèle SARIMA(3,1,2)(0,1,1) tire son épingle du jeu en proposant les prédictions les plus proches des valeurs observées
+
+- A mesure que le temps passe, les modèles deviennent moins performants et sous-estiment les valeurs réelles ; on peut vraisemblablement imputer la sous-évaluation à une sur-performance compensatoire du nombre de postes vacants. 
+
+
+## Conclusion
+
+Face à la période COVID, les modèles entraînés sur la série temporelle de Janvier 2009 à Décembre 2019 se comportent bien dès la sortie de crise.
+
+Certes l'accident COVID en 2020 met à mal les prédictions de l'ensemble des modèles, mais la résilience de l'économie qui transparaît au travers du nombre de postes vacants remet en selle les modèles ; notamment le modèle SARIMA(3,1,2)(0,1,1)[12] dont les prédictions dès Avril 2021 sont plus qu'honorables.
+
+Dans un cadre professionnel où il se serait agi de suivre et prédire l'évolution du nombre de postes vacants en "temps réel" dès Mars 2020, une stratégie de suivi aurait pu être :
+
+- de conserver en tant que référence les modèles en vigueur qui proposaient de bonnes estimations jusqu'en février 2020 (Lissage exponentiel (M,Ad,A) et SARIMA(3,1,2)(0,1,1) en sont de bons exemples)
+
+- de suivre les valeurs mensuelles à partir de Mars 2020,
+
+  - en les comparant aux valeurs prédites par les modèles précédents : il se serait agi de déterminer le moment à partir duquel le nombre de postes vacants revient à une norme "sans-covid" (en l'occurrence Avril 2021)
+  
+  - en ajustant mensuellement de nouveaux modèles à partir de mars 2020 pour obtenir des prédictions au plus juste pendant la période "accidentée".
+
+
+En ce qui concerne la période post-covid (au-delà de Mars 2021), bien que les 1ers mois sont plutôt bien prédits, les modèles entraînés jusqu'en 2019 tendent à sous-évaluer de plus en plus au fil du temps les valeurs observées. Il s'agirait de les mettre à jour en ajustant de nouveaux modèles prenant en considération l'effet post-covid.
+
+\newpage
+
+# Références
+
+Organization for Economic Co-operation and Development, Total New Job Vacancies, Flow for France [LMJVTTNVFRM647N], retrieved from FRED, Federal Reserve Bank of St. Louis; https://fred.stlouisfed.org/series/LMJVTTNVFRM647N, May 31, 2023
+
+Séries Temporelles avec R, Méthodes et cas. Yves Aragon (Springer, 2011)
